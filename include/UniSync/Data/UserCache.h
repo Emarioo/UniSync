@@ -21,6 +21,9 @@ namespace unisync {
 		// will delete all data. The path will remain
 		void clean();
 
+		void load_old();
+		void save_old();
+        
 		//-- Data access
 
 		const std::string& getPath() const { return m_path; }
@@ -37,4 +40,13 @@ namespace unisync {
 		std::vector<SyncUnit*> m_units;
 
 	};
+    
+    struct CacheHeader {
+        char magic[4] = {'U','S','C','B'};
+        // static char HUMAN_MAGIC[4] = {'U','S','C','H'};
+        u32 reserved_version;
+        u32 reserved_checksum; // or file size?
+        u16 countOfConnections;
+        u16 countOfUnits;
+    };
 }

@@ -1,0 +1,16 @@
+{
+    "files.associations": {
+        "xstring": "cpp",
+        "xlocale": "cpp",
+        "functional": "cpp",
+        "xutility": "cpp",
+        "type_traits": "cpp",
+        "xtr1common": "cpp",
+        "cmath": "cpp",
+        "filesystem": "cpp",
+        "algorithm": "cpp",
+        "list": "cpp",
+        "forward_list": "cpp",
+        "vector": "cpp"
+    }
+}

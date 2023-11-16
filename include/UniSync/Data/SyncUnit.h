@@ -1,21 +1,20 @@
 #pragma once
 
 #include "UniSync/Data/SyncPart.h"
-#include "Engone/Utilities/Tracker.h"
-#include "Engone/Utilities/Utilities.h"
+#include "Engone/Util/Utilities.h"
 
 namespace unisync {
 	class SyncFile : public SyncPart {
 	public:
 		SyncFile() = default;
-		SyncFile(const std::string& name, bool isDir, uint64_t timestamp) : SyncPart(name), isDir(isDir), m_timestamp(timestamp)
+		SyncFile(const std::string& name, bool isDir, u64 timestamp) : SyncPart(name), isDir(isDir), m_timestamp(timestamp)
 			//, m_lastModified(lastModified) 
 		{}
 
 		bool isDir = false;
 		// in milliseconds
-		uint64_t m_timestamp;
-		//uint64_t m_lastModified;
+		u64 m_timestamp;
+		//u64 m_lastModified;
 
 		// 0 means they are equal. -1, 1 means they are different.
 		int compare(SyncFile& file);
@@ -28,7 +27,7 @@ namespace unisync {
 		~SyncUnit() { cleanup(); }
 
 		std::string m_password;
-		uint64_t m_timestamp;
+		u64 m_timestamp;
 		std::string m_root; // should it be kept behind public functions?
 		std::string m_oldRoot;
 		std::vector<SyncFile> m_files;
@@ -46,7 +45,7 @@ namespace unisync {
 		engone::FileMonitor m_fileMonitor;
 
 		// in milliseconds
-		uint64_t getTime(const std::string& fullpath);
+		u64 getTime(const std::string& fullpath);
 		bool validRoot();
 
 		// you may want to lock the mutex when doing this.
@@ -68,7 +67,5 @@ namespace unisync {
 		//void autoRefresh();
 
 		void cleanup();
-
-		static engone::TrackerId trackerId;
 	};
 }

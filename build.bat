@@ -1,29 +1,27 @@
 @echo off
 @setlocal enabledelayedexpansion
 
-SET COMPILE_OPTIONS=/DEBUG /std:c++14 /EHsc /TP /Z7 /MTd /nologo
-SET LINK_OPTIONS=/IGNORE:4006 /DEBUG /SUBSYSTEM:CONSOLE /NOLOGO
+set WITH_CONSOLE=1
+SET USE_DEBUG=1
 
-SET INCLUDE_DIRS=/Iinclude /Ilibs/GLEW/include /Ilibs/GLFW/include /Ilibs/include
-SET DEFINITIONS=/DENGONE_LOGGER /DENGONE_TRACKER /DENGONE_OPENGL
-SET FORCE_INCLUDES=
-SET LIBRARIES=Engone.lib
-SET LIBRARY_DIRS=
+SET COMPILE_OPTIONS=/std:c++17 /EHsc /TP /MTd /nologo
+SET LINK_OPTIONS=/NOLOGO /INCREMENTAL:NO /IGNORE:4006 /IGNORE:4098 /IGNORE:4099
 
-@rem DO NOT TURN OFF USE_LOCAL. DrawingStudio uses an old version of Engone.
-SET USE_LOCAL=1
+SET LINK_OPTIONS=!LINK_OPTIONS! Advapi32.lib gdi32.lib shell32.lib user32.lib OpenGL32.lib ws2_32.lib
+SET LINK_OPTIONS=!LINK_OPTIONS! /DEBUG libs/glfw-3.3.8/lib/glfw3_mt.lib libs/glew-2.1.0/lib/glew32s.lib
 
-if !USE_LOCAL! == 1 (
-    SET INCLUDE_DIRS=!INCLUDE_DIRS! /Ilibs\Engone\include
-    SET LIBRARY_DIRS=!LIBRARY_DIRS! /LIBPATH:libs\Engone\lib
-) else (
-    @REM exist "D:\Backup\CodeProjects\ProjectUnknown\Engone\include\"
-    @REM exist "D:\Backup\CodeProjects\ProjectUnknown\bin\Engone\Debug-MSVC\Engone.lib"
-    SET INCLUDE_DIRS=!INCLUDE_DIRS! /ID:\Backup\CodeProjects\ProjectUnknown\Engone\include
-    echo d | xcopy /y "D:\Backup\CodeProjects\ProjectUnknown\include\Engone" "libs\Engone\include\Engone" /s /d > nul
-    SET LIBRARY_DIRS=!LIBRARY_DIRS! /LIBPATH:D:\Backup\CodeProjects\ProjectUnknown\bin\Engone\Debug-MSVC
-    echo f | xcopy /y "D:\Backup\CodeProjects\ProjectUnknown\bin\Engone\Debug-MSVC\Engone.lib" "libs\Engone\lib\Engone.lib" /d > nul
+SET INCLUDE_DIRS=/Iinclude /Ilibs/stb/include /Ilibs/glfw-3.3.8/include /Ilibs/glew-2.1.0/include
+SET DEFINITIONS=/DOS_WINDOWS /FI pch.h /DGLEW_STATIC
+
+if !USE_DEBUG!==1 (
+    SET COMPILE_OPTIONS=!COMPILE_OPTIONS! /DEBUG /Z7
+    SET LINK_OPTIONS=!LINK_OPTIONS! /DEBUG
 )
+if !WITH_CONSOLE!==1 (
+    SET LINK_OPTIONS=!LINK_OPTIONS! /SUBSYSTEM:CONSOLE
+) else (
+    SET LINK_OPTIONS=!LINK_OPTIONS! /SUBSYSTEM:WINDOWS
+) 
 
 set /a startTime=6000*( 100%time:~3,2% %% 100 ) + 100 * ( 100%time:~6,2% %% 100 ) + ( 100%time:~9,2% %% 100 )
 
@@ -37,8 +35,13 @@ type nul > !SRC!
 for /r %%i in (*.cpp) do (
     SET file=%%i
     
-    if not "x!file:UniSync=!"=="x!file!" if "x!file:bin=!"=="x!file!" (
-        echo #include ^"!file:\=/!^" >> !SRC!
+    if "x!file:bin=!"=="x!file!" if "x!file:__=!"=="x!file!" (
+        if not "x!file:UniSync=!"=="x!file!" (
+            echo #include ^"!file:\=/!^" >> !SRC!
+        ) else if not "x!file:Engone=!"=="x!file!" (
+            echo #include ^"!file:\=/!^" >> !SRC!
+            
+        )
     )
 )
 @REM pause
@@ -46,7 +49,7 @@ rem ########## COMPILE #############
 
 set /a c_startTime=6000*( 100%time:~3,2% %% 100 ) + 100* ( 100%time:~6,2% %% 100 ) + ( 100%time:~9,2% %% 100 )
 
-cl /c !COMPILE_OPTIONS! !FORCE_INCLUDES! !DEFINITIONS! !INCLUDE_DIRS! !SRC! /Fo!OBJ_DIR!\all.o
+cl /c !COMPILE_OPTIONS! !DEFINITIONS! !INCLUDE_DIRS! !SRC! /Fo!OBJ_DIR!\all.o
 @REM if not %errorlevel% == 0 ( exit )
 
 set /a c_endTime=6000*(100%time:~3,2% %% 100 )+100*(100%time:~6,2% %% 100 )+(100%time:~9,2% %% 100 )
@@ -64,7 +67,7 @@ set /a l_startTime=6000*( 100%time:~3,2% %% 100 ) + 100* ( 100%time:~6,2% %% 100
 rc /nologo /fo bin/intermediates/resources.res UniSync\resources.rc
 
 @REM pause
-link !OBJ_DIR!\all.o !LIBRARY_DIRS! !LIBRARIES! !LINK_OPTIONS! bin/intermediates/resources.res /OUT:bin/UniSync.exe
+link !OBJ_DIR!\all.o !LINK_OPTIONS! bin/intermediates/resources.res /OUT:bin/unisync.exe
 @REM if not %errorlevel% == 0 ( exit )
 
 set /a l_endTime=6000*(100%time:~3,2% %% 100 )+100*(100%time:~6,2% %% 100 )+(100%time:~9,2% %% 100 )
@@ -82,4 +85,4 @@ echo Compilation in %c_finS%.%c_finS2% seconds
 echo Linking in %l_finS%.%l_finS2% seconds
 echo Finished in %finS%.%finS2% seconds
 
-@REM start bin\UniSync.exe
+bin\unisync.exe

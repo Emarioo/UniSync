@@ -1,6 +1,6 @@
 #pragma once
 
-#include "UniSync/Data/SyncState.h"
+#include "UniSync/Data/Status.h"
 
 namespace unisync {
 	class SyncPart {
@@ -8,17 +8,17 @@ namespace unisync {
 		SyncPart() = default;
 		SyncPart(const std::string& name) : m_name(name) {};
 
-		void set(SyncState state, bool on = true) {
+		void set(Status state, bool on = true) {
 			if (on) {
 				m_status = m_status | state;
 			} else {
 				m_status = m_status & (~state);
 			}
 		}
-		bool check(SyncState state) {
+		bool check(Status state) {
 			return m_status & state;
 		}
-		SyncStates m_status = StateNone;
+		Status m_status = STATUS_NONE;
 		std::string m_name = "Unknown";
 	};
 }

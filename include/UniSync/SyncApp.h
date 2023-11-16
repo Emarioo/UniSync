@@ -1,11 +1,13 @@
 #pragma once
 
-#include "Engone/Engone.h"
 #include "Engone/Networking/NetworkModule.h"
-
 #include "UniSync/Keybindings.h"
-
 #include "UniSync/Data/UserCache.h"
+#include "UniSync/Config.h"
+
+#include "Engone/InputModule.h"
+#include "Engone/UIModule.h"
+#include "Engone/Util/Perf.h"
 
 namespace unisync {
 	/* Design
@@ -52,16 +54,46 @@ namespace unisync {
 	// FEATURE: Freeze/Ignore directories and files
 	// FEATURE: Auto reconnect after a few seconds so that you have time to turn of the reconnection.
 
-	class SyncApp : public engone::Application {
-	public:
+    struct AppOptions {
+        std::string cachePath; // ".unisync"
+    };
+
+    struct SyncApp;
+    typedef void (*AppProcedure)(SyncApp* app);
+	struct SyncApp {
+        AppOptions appOptions{};
+        
+        GLFWwindow* window = nullptr;
+        float winWidth, winHeight;
+        engone::InputModule inputModule;
+        engone::UIModule uiModule;
+        // engone::AssetStorage assetStorage;
+        engone::LinearAllocator stringAllocator;
+        
+        bool isRunning = false;
+        float update_deltaTime = 1.0f/60.0f; // fixed
+        float current_frameTime = 1.0f/60.0f;
+        double game_runtime = 0;
+        AvgValue<double> avg_frameTime{30};
+        AvgValue<float> avg_updateTime{30};
+        
+        AppProcedure activeUpdateProc = nullptr;
+        AppProcedure activeRenderProc = nullptr;
+        AppProcedure inactiveUpdateProc = nullptr;
+        AppProcedure inactiveRenderProc = nullptr;
+        
+		SyncApp() = default;
+		~SyncApp() {
+            cleanup();
+        }
+        void cleanup();
+        void init(const AppOptions& options);
+        
 		enum SyncOption : int {
 			AutoRefresh=1,
 		};
 		typedef int SyncOptions;
 		SyncOptions options=0;
-
-		SyncApp(engone::Engone* engone, const std::string& cachePath);
-		~SyncApp();
 
 		// command you call
 		void synchronizeUnits();
@@ -88,19 +120,17 @@ namespace unisync {
 		void editAction(std::string& str);
 		void openAction(SyncPart* part);
 		void renderPart(SyncPart* part);
-		void renderState(const std::string& text, SyncStates state);
+		void renderState(const std::string& text, Status state);
 
-		void update(engone::LoopInfo& info) override;
-		void render(engone::LoopInfo& info) override;
-		void onClose(engone::Window* window) override;
+		// void update(engone::LoopInfo& info) override;
+		// void render(engone::LoopInfo& info) override;
+		// void onClose(engone::Window* window) override;
 
 		void pendSynchronize();
 
-		void cleanup();
-	public:
 		UserCache userCache;
-		engone::Window* m_window=nullptr;
-		engone::FontAsset* consolas=nullptr;
+		// engone::Window* m_window=nullptr;
+		// engone::FontAsset* consolas=nullptr;
 		
 		bool m_shouldSynchronize=false;
 
@@ -133,4 +163,7 @@ namespace unisync {
 
 		bool hadFocus = false;// relocate  stuff
 	};
+    void StartApp(const AppOptions& options);
+    void UpdateApp(SyncApp* app);
+    void RenderApp(SyncApp* app);
 }

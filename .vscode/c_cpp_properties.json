@@ -4,10 +4,9 @@
             "name": "Win32",
             "includePath": [
                 "${workspaceFolder}/include",
-                "${workspaceFolder}/libs/GLFW/include*",
-                "${workspaceFolder}/libs/GLEW/include*",
-                "${workspaceFolder}/libs/Engone/include*",
-                "D:\\Backup\\CodeProjects\\ProjectUnknown\\include"
+                "${workspaceFolder}/libs/glew-2.1.0/include",
+                "${workspaceFolder}/libs/glfw-3.3.8/include",
+                "${workspaceFolder}/libs/stb/include"
             ],
             "defines": [
                 "_DEBUG",
@@ -19,7 +18,10 @@
             "compilerPath": "cl.exe",
             "cStandard": "c17",
             "cppStandard": "c++17",
-            "intelliSenseMode": "windows-msvc-x64"
+            "intelliSenseMode": "windows-msvc-x64",
+            "forcedInclude": [
+                "include/pch.h"
+            ]
         }
     ],
     "version": 4

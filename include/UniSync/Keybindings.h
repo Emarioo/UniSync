@@ -20,10 +20,21 @@
 #define KEYMAP_SYNCHRONIZE 'Y'
 #define KEYMAP_SAVE 'T'
 */
-namespace unisync {
-	enum Key : uint16_t {
-		KeyUp, KeyDown, KeyOpen, KeyClose, KeyEdit, KeyMainAction, KeyDelete, KeyFreeze, KeyMelt
-	};
 
-	void CreateDefaultKeybindings();
+#include "GLFW/glfw3.h"
+
+namespace unisync {
+	enum Key : u16 {
+		KeyUp           =  GLFW_KEY_UP,
+        KeyDown         =  GLFW_KEY_DOWN,
+        KeyOpen         =  GLFW_KEY_RIGHT,
+        KeyClose        =  GLFW_KEY_LEFT,
+        KeyEdit         =  GLFW_KEY_ENTER,
+        KeyMainAction   =  GLFW_KEY_SPACE,
+        KeyDelete       =  GLFW_KEY_BACKSPACE,
+        KeyFreeze       =  GLFW_KEY_F,
+        KeyMelt         =  GLFW_KEY_M,
+    };
+
+	// void CreateDefaultKeybindings();
 }

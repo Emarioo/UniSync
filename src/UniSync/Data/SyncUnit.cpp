@@ -1,11 +1,9 @@
 #include "UniSync/Data/SyncUnit.h"
 
 #include "Engone/Logger.h"
-#include "Engone/Utilities/Utilities.h"
+#include "Engone/Util/Utilities.h"
 
 namespace unisync {
-	engone::TrackerId SyncUnit::trackerId="SyncUnit";
-
 	int SyncFile::compare(SyncFile& file) {
 		int len = m_name.length();
 		int result=-1;
@@ -68,7 +66,10 @@ namespace unisync {
 		bool refreshed = false;
 		// ISSUE: maybe sanitize away .. when reading files, root too?
 
-		if (!std::filesystem::exists(m_root)) {
+		if (m_root.empty()) {
+			unlock();
+            return false;
+        } else if(!std::filesystem::exists(m_root)) {
 			log::out << log::RED << "SyncUnit - Invalid root " << m_root << "\n";
 			unlock();
 			return false;
@@ -77,7 +78,7 @@ namespace unisync {
 		try {
 			for (const auto& dirEntry : std::filesystem::recursive_directory_iterator(m_root)) {
 				std::string str = dirEntry.path().string().substr(m_root.length());
-				uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(dirEntry.last_write_time().time_since_epoch()).count();
+				u64 timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(dirEntry.last_write_time().time_since_epoch()).count();
 				//log::out << str << "\n";
 				bool found = false;
 				for (int i = 0; i < fileCount; i++) {
@@ -89,7 +90,7 @@ namespace unisync {
 						if (timestamp != file.m_timestamp) {
 							// Update file
 							file.m_timestamp = timestamp;
-							file.set(StateFileNew);
+							file.set(STATUS_FILE_NEW);
 							refreshed = true;
 						}
 						break;
@@ -98,7 +99,7 @@ namespace unisync {
 				if (!found) {
 					// New file
 					SyncFile syncFile = { str, dirEntry.is_directory(), timestamp };
-					syncFile.set(StateFileNew);
+					syncFile.set(STATUS_FILE_NEW);
 					m_files.push_back(syncFile); // files will be sorted later
 					//insertFile(syncFile);// cannot use this because it would interfere with variable foundFiles.
 					refreshed = true;
@@ -110,7 +111,7 @@ namespace unisync {
 
 		for (int i = foundFiles.size() - 1; i >= 0; i--) {
 			if (!foundFiles[i]) {
-				m_files[i].m_status |= StateFileDeleted;
+				m_files[i].m_status |= STATUS_FILE_DELETED;
 				//m_files.erase(m_files.begin() + i);
 				refreshed = true;
 			}
@@ -172,15 +173,20 @@ namespace unisync {
 	//	}
 	//	unlock();
 	//}
+    
+    void MonitorCallback(void* _, const std::string& path, engone::FileMonitor::ChangeType type) {
+        using namespace engone;
+        SyncUnit* self = (SyncUnit*)_;
+        Assert(self);
+        log::out << "SyncUnit refresh " << path <<" "<<type << "\n";
+        // should do something better here probably
+        if (self->refresh())
+            self->m_wasRefreshed = true;
+    }
 	void SyncUnit::startMonitor() {
 		using namespace engone;
 		if (validRoot()) {
-			m_fileMonitor.check(m_root, [this](const std::string& path, int type) {
-				log::out << "SyncUnit refresh " << path <<" "<<type << "\n";
-				// should do something better here probably
-				if (refresh())
-					m_wasRefreshed = true;
-			}, engone::FileMonitor::WATCH_SUBTREE);
+			m_fileMonitor.check(m_root, MonitorCallback, this, engone::FileMonitor::WATCH_SUBTREE);
 		}
 	}
 	void SyncUnit::insertFile(SyncFile file) {
@@ -208,7 +214,7 @@ namespace unisync {
 		using namespace engone;
 		//log::out << "START SORTING ###############\n";
 		int count = m_files.size();
-		int* fileIndex = (int*)alloc::malloc(sizeof(int) * count); // no need to track since it will be freed later
+		int* fileIndex = (int*)engone::Allocate(sizeof(int) * count); // no need to track since it will be freed later
 		for (int i = 0; i < count; i++) {
 			fileIndex[i] = i;
 			//log::out << m_files[i].m_name << "\n";
@@ -234,16 +240,16 @@ namespace unisync {
 		}
 		//log::out << "--------------\n";
 		// easier
-		SyncFile* temp = (SyncFile*)alloc::malloc(sizeof(SyncFile)*count);
+		SyncFile* temp = (SyncFile*)engone::Allocate(sizeof(SyncFile)*count);
 		std::memcpy(temp, m_files.data(), sizeof(SyncFile) * count);
 		for (int i = 0; i < count; i++) {
 			std::memcpy(m_files.data() + i, temp+fileIndex[i], sizeof(SyncFile));
 			//log::out << m_files[i].m_name << "\n";
 		}
-		alloc::free(temp, sizeof(SyncFile) * count);
-		alloc::free(fileIndex, sizeof(int) * count);
+		engone::Free(temp, sizeof(SyncFile) * count);
+		engone::Free(fileIndex, sizeof(int) * count);
 	}
-	uint64_t SyncUnit::getTime(const std::string& fullpath) {
+	u64 SyncUnit::getTime(const std::string& fullpath) {
 		if (std::filesystem::exists(fullpath))
 			return std::chrono::duration_cast<std::chrono::milliseconds>(std::filesystem::last_write_time(fullpath).time_since_epoch()).count();
 		engone::log::out << engone::log::RED << "getTime - path not valid\n";

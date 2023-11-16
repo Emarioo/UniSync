@@ -1,25 +1,228 @@
 
 #include "UniSync/SyncApp.h"
 
-#include "Engone/EventModule.h"
-#include "Engone/Engone.h"
+// #include "Engone/EventModule.h"
+// #include "Engone/Engone.h"
 
-#include "UniSync/../../resource.h"
+#include "UniSync/resource.h"
+#include "Engone/Util/ImageUtility.h"
 
 #define SYNCAPP_DEBUG(x) x
 //#define SYNCAPP_DEBUG()
 
 namespace unisync {
-	static const engone::ui::Color linkedColor = { 0.2,0.95,0.1 };
-	static const engone::ui::Color failedColor = { 0.95,0.2,0.2 };
-	static const engone::ui::Color connectingColor = { 0.96,0.78,0.3 };
-	static const engone::ui::Color frozenColor = { 0.1,0.7,0.8 };
-	static const engone::ui::Color newColor = { 0.3,0.88,0.3 };
-	static const engone::ui::Color overrideColor = { 0.2,0.1,0.9 };
+    
+    int RenderThread(SyncApp* app);
+    void StartApp(const AppOptions& options) {
+        SyncApp* app = new SyncApp();
+        app->appOptions = options;
+        
+        RenderThread(app);
+        
+        delete app;
+    }
+    int RenderThread(SyncApp* app) {
+        using namespace engone;
+    
+        Assert(glfwInit());
+    
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    
+        GLFWwindow* window = glfwCreateWindow(800, 600, "Convenient syncrhonization", NULL, NULL);
+        if (!window) {
+            glfwTerminate();
+            return 0;
+        }
+        
+        // TODO: Fix memory leak
+        // ICO* ico = ICO::Load(IDI_ICON1); // this fails, not sure why
+        // if(ico){
+        //     RawImage* raw = ICOToRaw(ico);
+        //     GLFWimage tmp = {raw->width,raw->height,(uint8_t*)raw->data()};
+        //     glfwSetWindowIcon(window,1,&tmp);
+        // }
+    
+        glfwMakeContextCurrent(window);
+        glewInit();
 
-	static const engone::ui::Color defaultColor = { 0.75,0.85,0.75 };
-	static const engone::ui::Color selectedColor = { 0.3,0.94,0.4 };
-	static const engone::ui::Color editColor = { 1,0.4,0.1 };
+        // if(gameState->locked_fps) 
+            glfwSwapInterval(1); // limit fps to your monitors frequency?
+        // else
+        //     glfwSwapInterval(0);
+            
+        app->window = window;
+
+        // SetupRendering(gameState);
+
+        #define HOT_RELOAD_ORIGIN "bin/app.dll"
+        #define HOT_RELOAD_IN_USE "bin/hotloaded.dll"
+        #define HOT_RELOAD_ORIGIN_PDB "bin/app.pdb"
+        #define HOT_RELOAD_IN_USE_PDB "bin/hotloaded.pdb"
+        #define HOT_RELOAD_TIME 2
+
+        app->activeUpdateProc = UpdateApp;
+        app->activeRenderProc = RenderApp;
+        app->inactiveUpdateProc = UpdateApp;
+        app->inactiveRenderProc = RenderApp;
+
+        void* prev_hot_reload_dll = nullptr;
+        void* hot_reload_dll = nullptr;
+        double last_dll_write = 0;
+    
+        auto lastTime = engone::StartMeasure();
+
+        // glEnable(GL_BLEND);
+        // glEnable(GL_CULL_FACE);
+        // glEnable(GL_DEPTH_TEST);
+        // glCullFace(GL_FRONT);
+        
+        PNG* consolas_png = PNG::Load(IDB_PNG1);
+        // PNG* colorMarker_png = PNG::Load(IDB_PNG2);
+        
+        RawImage* consolas_raw = PNGToRawImage(consolas_png);
+        // RawImage* colorMarker_raw = PNGToRawImage(colorMarker_png);
+        
+        int consolasId = app->uiModule.readRawFont((u8*)consolas_raw->data(), consolas_raw->width, consolas_raw->height, consolas_raw->channels);
+        Assert(consolasId == 0);
+        // app->colorMarker_textureId = app->uiModule.readRawTexture((u8*)colorMarker_raw->data(), colorMarker_raw->width, colorMarker_raw->height, colorMarker_raw->channels);
+        // app->uiModule.readRawTexture((u8*)colorMarker_raw->data(), colorMarker_raw->width, colorMarker_raw->height, colorMarker_raw->channels);
+        app->inputModule.init(app->window);
+        app->uiModule.init(nullptr);
+        app->uiModule.enableInput(&app->inputModule);
+        
+        app->init(app->appOptions);
+        
+        // Loop
+        auto gameStartTime = engone::StartMeasure();
+        double updateAccumulation = 0;
+        double sec_timer = 0;
+        double reloadTime = 0;
+        while (!glfwWindowShouldClose(window)) {    
+            int width, height;
+            glfwGetFramebufferSize(window, &width, &height);
+            app->winWidth = width;
+            app->winHeight = height;
+        
+            auto now = engone::StartMeasure();
+            double frame_deltaTime = DiffMeasure(now - lastTime);
+            lastTime = now;
+            app->current_frameTime = frame_deltaTime;
+            
+            app->avg_frameTime.addSample(frame_deltaTime);
+
+            app->game_runtime = DiffMeasure(now - gameStartTime);
+
+            glViewport(0, 0, width, height);
+            glClearColor(0.1,0.1,0.1,1);
+            // glClearColor(0.7,0.7,0.33,1);
+            glClear(GL_COLOR_BUFFER_BIT);
+
+            #ifdef USE_HOT_RELOAD
+            reloadTime -= frame_deltaTime;
+            if(reloadTime <= 0) {
+                reloadTime += HOT_RELOAD_TIME;
+                // log::out << "Try reload\n";
+                double new_dll_write = 0;
+                bool yes = engone::FileLastWriteSeconds(HOT_RELOAD_ORIGIN, &new_dll_write);
+                if(yes && new_dll_write > last_dll_write) {
+                    log::out << "Reloaded\n";
+                    last_dll_write = new_dll_write;
+                    if(hot_reload_dll) {
+                        Assert(!prev_hot_reload_dll);
+                        prev_hot_reload_dll = hot_reload_dll;
+                        hot_reload_dll = nullptr;
+                    }
+                    // TODO: Is 256 enough?
+                    char dll_path[256]{0};
+                    char pdb_path[256]{0};
+                    snprintf(dll_path,sizeof(dll_path),"bin/hotloaded-%d.dll", (int)rand());
+                    snprintf(pdb_path,sizeof(pdb_path),"bin/hotloaded-%d.pdb", (int)rand());
+                    engone::FileCopy(HOT_RELOAD_ORIGIN, dll_path);
+                    engone::FileCopy(HOT_RELOAD_ORIGIN_PDB, pdb_path);
+                    // engone::FileCopy(HOT_RELOAD_ORIGIN, HOT_RELOAD_IN_USE);
+                    // engone::FileCopy(HOT_RELOAD_ORIGIN_PDB, HOT_RELOAD_IN_USE_PDB);
+                    hot_reload_dll = engone::LoadDynamicLibrary(dll_path);
+                    // hot_reload_dll = engone::LoadDynamicLibrary(HOT_RELOAD_IN_USE);
+
+                    gameState->inactiveUpdateProc = (GameProcedure)engone::GetFunctionPointer(hot_reload_dll, "UpdateGame");
+                    gameState->inactiveRenderProc = (GameProcedure)engone::GetFunctionPointer(hot_reload_dll, "RenderGame");
+                    gameState->activeRenderProc = gameState->inactiveRenderProc;
+                }
+            }
+            // TODO: Mutex on game proc
+            if(gameState->activeUpdateProc == gameState->inactiveUpdateProc && prev_hot_reload_dll) {
+                engone::UnloadDynamicLibrary(prev_hot_reload_dll);
+                prev_hot_reload_dll = nullptr;
+            }
+            #endif
+            if(app->activeUpdateProc != app->inactiveUpdateProc) {
+                app->activeUpdateProc = app->inactiveUpdateProc;
+            }
+
+            // for(auto& proc : app->assetStorage.getIOProcessors()) {
+            //     proc->process();
+            // }
+            // for(auto& proc : app->assetStorage.getDataProcessors()) {
+            //     proc->process();
+            // }
+
+            updateAccumulation += frame_deltaTime;
+            if(app->activeUpdateProc){
+                while(updateAccumulation>app->update_deltaTime){
+                    updateAccumulation-=app->update_deltaTime;
+                    app->activeUpdateProc(app);
+                }
+            }
+
+            // for(auto& proc : app->assetStorage.getGraphicProcessors()) {
+            //     proc->process();
+            // }
+            if(app->activeRenderProc) {
+                app->activeRenderProc(app);
+            }
+
+            // glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            app->uiModule.render(app->winWidth, app->winHeight);
+
+            app->inputModule.resetEvents(true);
+            app->inputModule.resetPollChar();
+            app->inputModule.m_lastMouseX = app->inputModule.m_mouseX;
+            app->inputModule.m_lastMouseY = app->inputModule.m_mouseY;
+    
+            glfwSwapBuffers(window);
+            glfwPollEvents();
+        }
+        app->isRunning = false;
+        
+        // TODO: Move into it's own function?
+        app->userCache.save();
+		if (app->client) {
+			app->client->stop();
+		}
+		if (app->server) {
+			app->server->stop();
+		}
+		app->window = nullptr;
+		// stop();
+    
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        
+        return 0;
+    }
+    
+	static const engone::UIColor linkedColor = { 0.2,0.95,0.1 };
+	static const engone::UIColor failedColor = { 0.95,0.2,0.2 };
+	static const engone::UIColor connectingColor = { 0.96,0.78,0.3 };
+	static const engone::UIColor collisionColor = { 0.96,0.78,0.3 };
+	static const engone::UIColor frozenColor = { 0.1,0.7,0.8 };
+	static const engone::UIColor newColor = { 0.3,0.88,0.3 };
+	static const engone::UIColor overrideColor = { 0.2,0.1,0.9 };
+
+	static const engone::UIColor defaultColor = { 0.75,0.85,0.75 };
+	static const engone::UIColor selectedColor = { 0.3,0.94,0.4 };
+	static const engone::UIColor editColor = { 1,0.4,0.1 };
 
 	// for convenience
 	static engone::Logger& operator<<(engone::Logger& logger, engone::Sender* sender) {
@@ -27,19 +230,25 @@ namespace unisync {
 		else logger << "Client: ";
 		return logger;
 	}
-
-	SyncApp::SyncApp(engone::Engone* engone, const std::string& cachePath) : Application(engone) {
+    void SyncApp::cleanup(){
+		delete server;
+		server = nullptr;
+		delete client;
+		client = nullptr;
+        engone::log::out << engone::log::RED << "SyncApp CLEANUP INCOMPLETE\n";
+    }
+	void SyncApp::init(const AppOptions& appOptions) {
 		using namespace engone;
 		
 		options = options | AutoRefresh;
 
-		CreateDefaultKeybindings();
+		// CreateDefaultKeybindings();
 
-		m_window = createWindow({ModeWindowed,600,500});
-		m_window->setTitle("UniSync");
-		consolas = getStorage()->set<FontAsset>("consolas", new FontAsset(IDB_PNG1,"4\n35"));
-
-		userCache.load(cachePath);
+		// m_window = createWindow({ModeWindowed,600,500});
+		// m_window->setTitle("UniSync");
+		// consolas = getStorage()->set<FontAsset>("consolas", new FontAsset(IDB_PNG1,"4\n35"));
+        Assert(!appOptions.cachePath.empty());
+		userCache.load(appOptions.cachePath);
 		if (options & AutoRefresh) {
 			for (SyncUnit* unit : userCache.getUnits()) {
 				unit->startMonitor();
@@ -51,50 +260,98 @@ namespace unisync {
 		// FEATURE: flag which auto reconnects
 		reconnect();
 
-		if (!consolas)
-			log::out << log::RED << "Consolas is nullptr\n";
+		// if (!consolas)
+		// 	log::out << log::RED << "Consolas is nullptr\n";
 	}
-	SyncApp::~SyncApp() {
-		cleanup();
-	}
-	void SyncApp::cleanup() {
-		engone::GetTracker().untrack(server);
-		engone::GetTracker().untrack(client);
-		delete server;
-		server = nullptr;
-		delete client;
-		client = nullptr;
-	}
-	void SyncApp::renderText(const std::string& text) {
-		if (!consolas) return;
-		engone::ui::TextBox root = { text, indentSize * indent,lineHeight * (line + scrollY),lineHeight,consolas, selectedLine == line ? selectedColor : defaultColor };
-		if (editingText && selectedLine == line) {
-			root.at = editingIndex;
-			root.editing = true;
-			root.rgba = editColor;
+    void UpdateApp(SyncApp* app) {
+        using namespace engone;
+		if (app->upCooldown > 0) app->upCooldown -= app->update_deltaTime;
+		if (app->downCooldown > 0) app->downCooldown -= app->update_deltaTime;
+		if ((app->inputModule.isKeyDown(KeyUp) && app->upCooldown <= 0) || app->inputModule.isKeyPressed(KeyUp)) {
+			app->upCooldown = 0.2;
+			app->editingText = false;
+			app->selectedLine--;
 		}
-		engone::ui::Draw(root);
+		if ((app->inputModule.isKeyDown(KeyDown) && app->downCooldown <= 0) || app->inputModule.isKeyPressed(KeyDown)) {
+			app->downCooldown = 0.2;
+			app->editingText = false;
+			app->selectedLine++;
+		}
+
+		if (app->options & SyncApp::AutoRefresh) {
+			for (int i = 0; i < app->userCache.getUnits().size(); i++) {
+				if (app->userCache.getUnits()[i]->m_wasRefreshed) {
+					app->m_shouldSynchronize = true;
+					app->userCache.getUnits()[i]->m_wasRefreshed = false;
+				}
+			}
+		}
+		if (app->m_shouldSynchronize) {
+			app->synchronizeUnits();
+			app->m_shouldSynchronize = false;
+		}
+    }
+	void SyncApp::renderText(const std::string& text) {
+		// if (!consolas) return;
+        auto ui = &uiModule;
+        
+        auto uitext = ui->makeText();
+        ui->setString(uitext, text.c_str());
+        uitext->x = indentSize * indent;
+        uitext->y = lineHeight * (line + scrollY); 
+        uitext->h = lineHeight;
+        uitext->color = selectedLine == line ? selectedColor : defaultColor;
+        
+        if (editingText && selectedLine == line) {
+			uitext->cursorIndex = editingIndex;
+			uitext->editing = true;
+			uitext->color = editColor;
+		}
+        
+		// engone::ui::TextBox root = { text, indentSize * indent,lineHeight * (line + scrollY),lineHeight,consolas, selectedLine == line ? selectedColor : defaultColor };
+		// if (editingText && selectedLine == line) {
+		// 	root.at = editingIndex;
+		// 	root.editing = true;
+		// 	root.rgba = editColor;
+		// }
+		// engone::ui::Draw(root);
 		line++;
 	}
 	void SyncApp::renderText(const std::string& first, const std::string& second) {
-		if (!consolas) return;
-		engone::ui::TextBox root = { first + second, indentSize * indent,lineHeight * (line + scrollY),lineHeight,consolas, selectedLine == line ? selectedColor : defaultColor };
-		if (editingText && selectedLine == line) {
-			root.at = first.length() + editingIndex;
-			root.editing = true;
-			root.rgba = editColor;
+		// if (!consolas) return;
+        auto ui = &uiModule;
+        
+        auto uitext = ui->makeText();
+        std::string comb = first + second; // TODO: Optimize
+        ui->setString(uitext, comb.c_str());
+        uitext->x = indentSize * indent;
+        uitext->y = lineHeight * (line + scrollY); 
+        uitext->h = lineHeight;
+        uitext->color = selectedLine == line ? selectedColor : defaultColor;
+        
+        if (editingText && selectedLine == line) {
+			uitext->cursorIndex = first.length() + editingIndex;
+			uitext->editing = true;
+			uitext->color = editColor;
 		}
-		engone::ui::Draw(root);
+        
+		// engone::ui::TextBox root = { first + second, indentSize * indent,lineHeight * (line + scrollY),lineHeight,consolas, selectedLine == line ? selectedColor : defaultColor };
+		// if (editingText && selectedLine == line) {
+		// 	root.at = first.length() + editingIndex;
+		// 	root.editing = true;
+		// 	root.rgba = editColor;
+		// }
+		// engone::ui::Draw(root);
 		line++;
 	}
 	void SyncApp::openAction(SyncPart* part) {
 		if (editingText)
 			return;
-		if (engone::IsKeybindingPressed(KeyOpen) && selectedLine == line) {
-			part->m_status = part->m_status | StateOpen;
+		if (inputModule.isKeyPressed(KeyOpen) && selectedLine == line) {
+			part->m_status = part->m_status | STATUS_OPEN;
 		}
-		if (engone::IsKeybindingPressed(KeyClose) && selectedLine == line) {
-			part->m_status = part->m_status & (~StateOpen);
+		if (inputModule.isKeyPressed(KeyClose) && selectedLine == line) {
+			part->m_status = part->m_status & (~STATUS_OPEN);
 		}
 	}
 	// check if path contains .. if it does, the program could alter files above the root directory. That would be a security issue.
@@ -105,8 +362,8 @@ namespace unisync {
 	}
 	void SyncApp::editAction(std::string& str) {
 		if (selectedLine == line) {
-			if (engone::IsKeybindingPressed(KeyEdit)) {
-				//part->m_status = part->m_status | SyncState::Open;
+			if (inputModule.isKeyPressed(KeyEdit)) {
+				//part->m_status = part->m_status | Status::Open;
 				if (editingText) {
 					editingText = false;
 				} else {
@@ -116,7 +373,8 @@ namespace unisync {
 				return;
 			}
 			if (editingText) {
-				engone::ui::Edit(str, editingIndex,editingText,false);
+                uiModule.edit(str, editingIndex, editingText, false);
+				// engone::ui::Edit(str, editingIndex,editingText,false);
 			}
 		}
 	}
@@ -126,51 +384,50 @@ namespace unisync {
 		renderText(part->m_name);
 		renderState(part->m_name, part->m_status);
 	}
-	void SyncApp::renderState(const std::string& text, SyncStates state) {
+	void SyncApp::renderState(const std::string& text, Status state) {
 		using namespace engone;
-		if (!consolas) return;
+		// if (!consolas) return;
 		line--;
-		int offset = consolas->getWidth(text, lineHeight);
-		if (state & StateConnLinked) {
-			ui::TextBox textBox = { " [Linked]",offset + indentSize * indent,lineHeight * (line + scrollY),lineHeight,consolas,linkedColor };
-			ui::Draw(textBox);
-			offset += consolas->getWidth(textBox.text, lineHeight);
+        auto ui = &uiModule;
+        auto layout = ui->makeLayout();
+        layout.flow = UILayout::FLOW_RIGHT;
+        layout.textSize = lineHeight;
+        layout.x = indentSize * indent + ui->getWidthOfText(nullptr, lineHeight, text.length());
+        layout.y = lineHeight * (line + scrollY);
+        // TODO: Use UILayout
+		// int offset =  ui->getWidthOfText(nullptr, lineHeight, text.length());
+		if (state & STATUS_CON_LINKED) {
+            auto textBox = layout.makeText(" [Linked]");
+            textBox->color = linkedColor;
 		}
-		if (state & StateConnFailed) {
-			ui::TextBox textBox = { " [Failed]",offset + indentSize * indent,lineHeight * (line + scrollY),lineHeight,consolas,failedColor };
-			ui::Draw(textBox);
-			offset += consolas->getWidth(textBox.text, lineHeight);
+		if (state & STATUS_CON_FAILED) {
+            auto textBox = layout.makeText(" [Failed]");
+            textBox->color = failedColor;
 		}
-		if (state & StateConnConnecting) {
-			ui::TextBox textBox = { " [Connecting]",offset + indentSize * indent,lineHeight * (line + scrollY),lineHeight,consolas,connectingColor };
-			ui::Draw(textBox);
-			offset += consolas->getWidth(textBox.text, lineHeight);
+		if (state & STATUS_CON_CONNECTING) {
+            auto textBox = layout.makeText(" [Connecting]");
+            textBox->color = connectingColor;
 		}
-		if (state & StateConnReconnect) {
-			ui::TextBox textBox = { " [Reconnect]",offset + indentSize * indent,lineHeight * (line + scrollY),lineHeight,consolas,connectingColor };
-			ui::Draw(textBox);
-			offset += consolas->getWidth(textBox.text, lineHeight);
+		if (state & STATUS_CON_RECONNECT) {
+            auto textBox = layout.makeText(" [Reconnect]");
+            textBox->color = connectingColor;
 		}
-		//log::out << (state & StateUnitFrozen) << " frozen?\n";
-		if ((state & StateUnitFrozen)||(state&StateFileFrozen)) {
-			ui::TextBox textBox = { " [Frozen]",offset + indentSize * indent,lineHeight * (line + scrollY),lineHeight,consolas,frozenColor };
-			ui::Draw(textBox);
-			offset += consolas->getWidth(textBox.text, lineHeight);
+		//log::out << (state & STATUS_UNIT_FROZEN) << " frozen?\n";
+		if ((state & STATUS_UNIT_FROZEN)||(state&STATUS_FILE_FROZEN)) {
+            auto textBox = layout.makeText(" [Frozen]");
+            textBox->color = frozenColor;
 		}
-		if (state & StateFileCollision) {
-			ui::TextBox textBox = { " [Collision]",offset + indentSize * indent,lineHeight * (line + scrollY),lineHeight,consolas,connectingColor };
-			ui::Draw(textBox);
-			offset += consolas->getWidth(textBox.text, lineHeight);
+		if (state & STATUS_FILE_COLLISION) {
+            auto textBox = layout.makeText(" [Collision]");
+            textBox->color = collisionColor;
 		}
-		if (state & StateFileNew) {
-			ui::TextBox textBox = { " [New]",offset + indentSize * indent,lineHeight * (line + scrollY),lineHeight,consolas,newColor };
-			ui::Draw(textBox);
-			offset += consolas->getWidth(textBox.text, lineHeight);
+		if (state & STATUS_FILE_NEW) {
+            auto textBox = layout.makeText(" [New]");
+            textBox->color = newColor;
 		}
-		if (state & StateFileOverride) {
-			ui::TextBox textBox = { " [Override]",offset + indentSize * indent,lineHeight * (line + scrollY),lineHeight,consolas,overrideColor };
-			ui::Draw(textBox);
-			offset += consolas->getWidth(textBox.text, lineHeight);
+		if (state & STATUS_FILE_OVERRIDE) {
+            auto textBox = layout.makeText(" [Override]");
+            textBox->color = overrideColor;
 		}
 		line++;
 	}
@@ -182,7 +439,7 @@ namespace unisync {
 		if((options&AutoRefresh)==0)
 			refreshUnits();
 
-		uint32_t unitCount;
+		u32 unitCount;
 		buf.pull(&unitCount);
 
 		for (int i = 0; i < unitCount; i++) {
@@ -190,9 +447,9 @@ namespace unisync {
 			buf.pull(unitName,256);
 			std::string password;
 			buf.pull(password, 256);
-			SyncState state;
+			Status state;
 			buf.pull(&state);
-			uint64_t timestamp;
+			u64 timestamp;
 			buf.pull(&timestamp);
 
 			SyncUnit* unit = userCache.getUnit(unitName);
@@ -207,13 +464,13 @@ namespace unisync {
 					log::out << log::YELLOW << "Received wrong password\n";
 				}else{
 					MessageBuffer send;
-					send.push(NetSynchronizeFiles);
+					send.push(NET_SYNC_FILES);
 					send.push(unitName);
 					send.push(password);
-					uint32_t fileSize = 0;
+					u32 fileSize = 0;
 					for (int k = 0; k < unit->m_files.size(); k++) {
 						SyncFile& file = unit->m_files[k];
-						//if (file.m_status & StateFileFrozen)
+						//if (file.m_status & STATUS_FILE_FROZEN)
 						//	continue;
 						fileSize++;
 					}
@@ -221,7 +478,7 @@ namespace unisync {
 					//log::out << "NetSync " << unit->m_files.size() << "\n";
 					for (int k = 0; k < unit->m_files.size(); k++) {
 						SyncFile& file = unit->m_files[k];
-						//if (file.m_status & StateFileFrozen)
+						//if (file.m_status & STATUS_FILE_FROZEN)
 						//	continue;
 						send.push(file.m_name);
 						send.push(file.m_status);
@@ -257,18 +514,18 @@ namespace unisync {
 		std::vector<std::string> fileNotifications; // collision notifications to send
 		std::vector<bool> sendFiles(unit->m_files.size(), true); // files to send, newest version, or you dont have
 
-		uint32_t fileCount;
+		u32 fileCount;
 		buf.pull(&fileCount);
 		//log::out << "fileCount "<<fileCount<<"\n";
 		for (int i = 0; i < fileCount; i++) {
 			std::string fileName;
 			buf.pull(fileName, 256);
-			SyncState state;
+			Status state;
 			buf.pull(&state);
-			uint64_t time;
+			u64 time;
 			buf.pull(&time);
 					
-			//if (state & StateFileFrozen)
+			//if (state & STATUS_FILE_FROZEN)
 			//	continue;
 
 			bool found = false;
@@ -279,32 +536,32 @@ namespace unisync {
 					sendFiles[j] = false;
 					found = true;
 
-					if (unit->m_status & StateUnitFrozen) {
-						if (!(unit->m_status & StateFileMelted))
+					if (unit->m_status & STATUS_UNIT_FROZEN) {
+						if (!(unit->m_status & STATUS_FILE_MELTED))
 							break;
-					}else if (file.m_status & StateFileFrozen)
+					}else if (file.m_status & STATUS_FILE_FROZEN)
 						break;
 
 					//log::out << file.m_status << " - "<<state<<"\n";
-					if (file.check(StateFileNew)) {
-						if (state & StateFileNew) {
+					if (file.check(STATUS_FILE_NEW)) {
+						if (state & STATUS_FILE_NEW) {
 							//log::out << "both new\n";
-							if (file.check(StateFileOverride)) { // I have priority of overriding
+							if (file.check(STATUS_FILE_OVERRIDE)) { // I have priority of overriding
 								sendFiles[j] = true;
 								//log::out << "override1\n";
-							} else if (state & StateFileOverride) {
+							} else if (state & STATUS_FILE_OVERRIDE) {
 								fileRequests.push_back(fileName);
 								//log::out << "override2\n";
 							} else {
-								file.set(StateFileCollision);
-								if (!(state & StateFileCollision))
+								file.set(STATUS_FILE_COLLISION);
+								if (!(state & STATUS_FILE_COLLISION))
 									fileNotifications.push_back(fileName);
 							}
 						} else {
 							sendFiles[j] = true;
 						}
 					} else {
-						if (state & StateFileNew) {
+						if (state & STATUS_FILE_NEW) {
 							fileRequests.push_back(fileName);
 						} else {
 							// neither is new do nothing
@@ -320,10 +577,10 @@ namespace unisync {
 		}
 		if (fileNotifications.size() > 0) {
 			MessageBuffer notfifs;
-			notfifs.push(NetNotifyFiles);
+			notfifs.push(NET_NOTIFY_FILES);
 			notfifs.push(unit->m_name);
 			notfifs.push(unit->m_password);
-			notfifs.push((uint32_t)fileNotifications.size());
+			notfifs.push((u32)fileNotifications.size());
 			for (int i = 0; i < fileNotifications.size(); i++) {
 				//log::out << sender << "Notify " << fileNotifications[i] << "\n";
 				notfifs.push(fileNotifications[i]);
@@ -332,10 +589,10 @@ namespace unisync {
 		}
 		if (fileRequests.size() > 0) {
 			MessageBuffer req;
-			req.push(NetRequestFiles);
+			req.push(NET_REQUEST_FILE);
 			req.push(unit->m_name);
 			req.push(unit->m_password);
-			req.push((uint32_t)fileRequests.size());
+			req.push((u32)fileRequests.size());
 			for (int i = 0; i < fileRequests.size(); i++) {
 				log::out << sender << "Req " << fileRequests[i] << "\n";
 				req.push(fileRequests[i]);
@@ -363,7 +620,7 @@ namespace unisync {
 		SyncUnit* unit = userCache.getUnit(unitName);
 
 		if (unit) {
-			uint32_t fileCount;
+			u32 fileCount;
 			buf.pull(&fileCount);
 			unit->lock();
 
@@ -375,13 +632,13 @@ namespace unisync {
 					buf.pull(path);
 					for (int j = 0; j < unit->m_files.size(); j++) {
 						SyncFile& file = unit->m_files[j];
-						if (unit->m_status & StateUnitFrozen) {
-							if (!(unit->m_status & StateFileMelted))
+						if (unit->m_status & STATUS_UNIT_FROZEN) {
+							if (!(unit->m_status & STATUS_FILE_MELTED))
 								break;
-						} else if (file.m_status & StateFileFrozen)
+						} else if (file.m_status & STATUS_FILE_FROZEN)
 							break;
 						if (file.m_name == path) {
-							file.set(StateFileCollision, true);
+							file.set(STATUS_FILE_COLLISION, true);
 						}
 					}
 				}
@@ -403,7 +660,7 @@ namespace unisync {
 			if (password != unit->m_password) {
 				log::out << log::YELLOW << "Received wrong password\n";
 			} else {
-				uint32_t fileCount;
+				u32 fileCount;
 				buf.pull(&fileCount);
 
 				for (int i = 0; i < fileCount; i++) {
@@ -420,34 +677,34 @@ namespace unisync {
 			unit->unlock();
 		}
 	}
-	enum StreamState : uint8_t {
+	enum StreamState : u8 {
 		StreamNormal,
 		StreamStart=1,
 		StreamEnd=2,
 	};
-	typedef uint8_t StreamStates;
+	typedef u8 StreamStates;
 	void SyncApp::sendFile(SyncUnit* unit, SyncFile& file, engone::Sender* sender, engone::UUID uuid) {
 		using namespace engone;
 
 		// unit should already be locked
 
-		if (unit->m_status & StateUnitFrozen) {
-			if (!(unit->m_status & StateFileMelted))
+		if (unit->m_status & STATUS_UNIT_FROZEN) {
+			if (!(unit->m_status & STATUS_FILE_MELTED))
 				return;
-		} else if (file.m_status & StateFileFrozen)
+		} else if (file.m_status & STATUS_FILE_FROZEN)
 			return;
 
 		// ISSUE: Here I assume the file will be received. Because if it isn't, the file on my side will not be new, and the file on the other side is still new.
 		//   The file on the other side will then be assumed to be the newest which is not the case.
-		file.set(StateFileNew, false);
-		file.set(StateFileOverride, false);
-		file.set(StateFileCollision, false);
+		file.set(STATUS_FILE_NEW, false);
+		file.set(STATUS_FILE_OVERRIDE, false);
+		file.set(STATUS_FILE_COLLISION, false);
 		file.m_timestamp = unit->getTime(unit->m_root + file.m_name);
 		//file.m_lastModified = unit->getTime(unit->m_root + file.m_name);
 
 		if (file.isDir) {
 			MessageBuffer send;
-			send.push(NetSendFile);
+			send.push(NET_SEND_FILE);
 			send.push(&file.isDir);
 			send.push(unit->m_name);
 			send.push(unit->m_password);
@@ -461,7 +718,7 @@ namespace unisync {
 			log::out << log::RED << "SyncApp::sendFile - Failed reading " << reader.getPath() << "\n";
 			return;
 		}
-		uint32_t bytesLeft = reader.size();
+		u32 bytesLeft = reader.size();
 		bool fileEmpty = bytesLeft == 0;
 
 
@@ -470,8 +727,8 @@ namespace unisync {
 		//log::out << sender << "Send " << file.m_name << "\n";
 
 		// THIS NEEDS TO CHANGE IF YOU CHANGE THE STRUCTURE OF THE MESSAGE
-		uint32_t maxHeaderSize = sizeof(SyncNet) + sizeof(file.isDir) + sizeof(fileUuid) +
-			sizeof(StreamStates) + sizeof(uint32_t)+8; // 8 for some extra bytes, why not
+		u32 maxHeaderSize = sizeof(SyncNet) + sizeof(file.isDir) + sizeof(fileUuid) +
+			sizeof(StreamStates) + sizeof(u32)+8; // 8 for some extra bytes, why not
 
 		maxHeaderSize += unit->m_name.length() + 5; // +5 because 4 is integer for length of string, 1 is for null char.
 		maxHeaderSize += unit->m_password.length() + 5;
@@ -480,7 +737,7 @@ namespace unisync {
 		while (bytesLeft != 0 || fileEmpty) {
 			fileEmpty = false;
 			MessageBuffer send;
-			send.push(NetSendFile);
+			send.push(NET_SEND_FILE);
 			send.push(&file.isDir); // always false
 			send.push(fileUuid);
 
@@ -495,7 +752,9 @@ namespace unisync {
 				send.push(file.m_name);
 			}
 
-			uint32_t transferSize = std::min(bytesLeft, sender->getTransferLimit() - maxHeaderSize);
+			u32 transferSize = sender->getTransferLimit() - maxHeaderSize;
+            if(bytesLeft < transferSize)
+                transferSize = bytesLeft;
 			//log::out << "Transfer "<<transferSize << "\n";
 			char* data = send.pushBuffer(transferSize);
 
@@ -542,17 +801,17 @@ namespace unisync {
 
 			SyncFile* file = unit->getFile(path, isDir);
 
-			uint64_t time = unit->getTime(fullPath);
+			u64 time = unit->getTime(fullPath);
 			if (file) {
-				bool yes = !file->check(StateFileFrozen);
-				if (unit->check(StateUnitFrozen))
-					yes = file->check(StateFileMelted);
+				bool yes = !file->check(STATUS_FILE_FROZEN);
+				if (unit->check(STATUS_UNIT_FROZEN))
+					yes = file->check(STATUS_FILE_MELTED);
 
 				if(yes){
 					file->m_timestamp = time;
-					file->set(StateFileNew, false);
-					file->set(StateFileOverride, false);
-					file->set(StateFileCollision, false);
+					file->set(STATUS_FILE_NEW, false);
+					file->set(STATUS_FILE_OVERRIDE, false);
+					file->set(STATUS_FILE_COLLISION, false);
 				}
 			} else {
 				unit->insertFile({ path,isDir,time });
@@ -597,7 +856,7 @@ namespace unisync {
 				//unit->preventRefresh(true);
 				FileWriter* writer = new FileWriter(fullPath, true);
 				if (writer->isOpen()) {
-					engone::GetTracker().track(writer);
+					// engone::GetTracker().track(writer);
 					fileDownloads[fileUuid] = { unit,path,writer };
 					download = &fileDownloads[fileUuid]; // the memory shouldn't change until this function is done, meaning download will not be invalidated by unordered_map
 				} else {
@@ -621,7 +880,7 @@ namespace unisync {
 				//log::out << log::RED << "FileWriter for UUID not found\n";
 				return;
 			}
-			uint32_t transferSize;
+			u32 transferSize;
 			char* data = buf.pullBuffer(&transferSize);
 			if (download->writer) {
 				try {
@@ -638,18 +897,18 @@ namespace unisync {
 					download->writer->close();
 					//download->unit->preventRefresh(false);
 
-					uint64_t time = download->unit->getTime(download->writer->getPath());
+					u64 time = download->unit->getTime(download->writer->getPath());
 
 					SyncFile* file = download->unit->getFile(download->fileName, isDir);
 					if (file) {
-						bool yes = !file->check(StateFileFrozen);
-						if (download->unit->check(StateUnitFrozen))
-							yes = file->check(StateFileMelted);
+						bool yes = !file->check(STATUS_FILE_FROZEN);
+						if (download->unit->check(STATUS_UNIT_FROZEN))
+							yes = file->check(STATUS_FILE_MELTED);
 
 						if (yes) {
-							file->set(StateFileNew, false);
-							file->set(StateFileOverride, false);
-							file->set(StateFileCollision, false);
+							file->set(STATUS_FILE_NEW, false);
+							file->set(STATUS_FILE_OVERRIDE, false);
+							file->set(STATUS_FILE_COLLISION, false);
 						}
 					} else {
 						download->unit->insertFile({ download->fileName,isDir,time });
@@ -658,7 +917,7 @@ namespace unisync {
 					download->unit->unlock();
 					delete download->writer;
 					download->writer = nullptr;
-					engone::GetTracker().untrack(download->writer);
+					// engone::GetTracker().untrack(download->writer);
 				}
 				fileDownloads.erase(fileUuid);
 				download = nullptr;
@@ -671,26 +930,26 @@ namespace unisync {
 		using namespace engone;
 		// Default port
 		if (conn->m_port.length() == 0) {
-			conn->m_port = "492";
+			conn->m_port = DEFAULT_PORT;
 		}
 
-		if (conn->m_status & StateServerType) {
+		if (conn->m_status & STATUS_CON_IS_SERVER) {
 			if (!serverConn) {
 				if (!server) {
 					server = new Server();
-					GetTracker().track(server);
+					// GetTracker().track(server);
 					server->setOnEvent([this](NetEvent type, UUID uuid) {
 						//log::out << "serv event " << uuid <<" "<< type << "\n";
 						if (serverConn) {
-							serverConn->set(StateConnConnecting, false);
+							serverConn->set(STATUS_CON_CONNECTING, false);
 							if (type == NetEvent::Connect) {
-								serverConn->set(StateConnLinked, true);
+								serverConn->set(STATUS_CON_LINKED, true);
 								refreshUnits();
 								synchronizeUnits();
 							} else if (type == NetEvent::Disconnect) {
 								// A client disconnected
 							} else if (type == NetEvent::Stopped) {
-								serverConn->set(StateConnLinked, false);
+								serverConn->set(STATUS_CON_LINKED, false);
 								serverConn = nullptr;
 								if (waitingServer) {
 									linkConnection(waitingServer);
@@ -704,15 +963,15 @@ namespace unisync {
 						SyncNet type;
 						buf.pull(&type);
 						//log::out << "Server received " << type << "\n";
-						if (type == NetSynchronizeUnits) {
+						if (type == NET_SYNC_UNITS) {
 							recSyncUnits(buf, server,uuid);
-						} else if (type == NetSynchronizeFiles) {
+						} else if (type == NET_SYNC_FILES) {
 							recSyncFiles(buf, server, uuid);
-						} else if (type == NetRequestFiles) {
+						} else if (type == NET_REQUEST_FILE) {
 							recReqFiles(buf, server, uuid);
-						} else if (type == NetSendFile) {
+						} else if (type == NET_SEND_FILE) {
 							recSendFile(buf, server, uuid);
-						} else if (type == NetNotifyFiles) {
+						} else if (type == NET_NOTIFY_FILES) {
 							recNotifyFiles(buf,server,uuid);
 						} else {
 							log::out << log::RED << "Server Received Unknown Message\n";
@@ -726,22 +985,22 @@ namespace unisync {
 				if (clientConn) {
 					if (client) {
 						client->stop();
-						clientConn->set(StateConnConnecting, false);
-						clientConn->set(StateConnFailed, false);
-						clientConn->set(StateConnLinked, false);
+						clientConn->set(STATUS_CON_CONNECTING, false);
+						clientConn->set(STATUS_CON_FAILED, false);
+						clientConn->set(STATUS_CON_LINKED, false);
 					}
 				}
 
 				bool yes = server->start(conn->m_port);
-				conn->set(StateConnReconnect, false);
-				conn->set(StateConnFailed, false);
+				conn->set(STATUS_CON_RECONNECT, false);
+				conn->set(STATUS_CON_FAILED, false);
 				if (yes) {
 					// check if successful
 					serverConn = conn;
-					conn->set(StateConnLinked,true);
-					//conn->set(StateConnConnecting,true);
+					conn->set(STATUS_CON_LINKED,true);
+					//conn->set(STATUS_CON_CONNECTING,true);
 				} else {
-					conn->set(StateConnFailed, true);
+					conn->set(STATUS_CON_FAILED, true);
 					log::out << "Port was invalid '" << conn->m_port << "'\n";
 				}
 			} else if (server) {
@@ -753,24 +1012,24 @@ namespace unisync {
 			if (!clientConn) {
 				if (!client) {
 					client = new Client();
-					GetTracker().track(client);
+					// GetTracker().track(client);
 					client->setOnEvent([this](NetEvent type, UUID uuid) {
 						//log::out << "client event " << type<< "\n";
 						if (clientConn) {
-							clientConn->set(StateConnConnecting, false);
+							clientConn->set(STATUS_CON_CONNECTING, false);
 							if (type == NetEvent::Connect) {
-								clientConn->set(StateConnLinked,true);
+								clientConn->set(STATUS_CON_LINKED,true);
 								refreshUnits();
 								synchronizeUnits();
 							} else if (type == NetEvent::Disconnect) {
-								clientConn->set(StateConnLinked, false);
+								clientConn->set(STATUS_CON_LINKED, false);
 								clientConn = nullptr;
 								if (waitingClient) {
 									linkConnection(waitingClient);
 									waitingClient = nullptr;
 								}
 							} else if (type == NetEvent::Failed) {
-								clientConn->set(StateConnFailed,true);
+								clientConn->set(STATUS_CON_FAILED,true);
 								clientConn = nullptr;
 								if (waitingClient) {
 									linkConnection(waitingClient);
@@ -785,15 +1044,15 @@ namespace unisync {
 						SyncNet type;
 						buf.pull(&type);
 						//log::out << "Client received " <<type<< "\n";
-						if (type == NetSynchronizeUnits) {
+						if (type == NET_SYNC_UNITS) {
 							recSyncUnits(buf, client, 0);
-						} else if (type == NetSynchronizeFiles) {
+						} else if (type == NET_SYNC_FILES) {
 							recSyncFiles(buf, client, 0);
-						} else if (type == NetRequestFiles) {
+						} else if (type == NET_REQUEST_FILE) {
 							recReqFiles(buf, client, 0);
-						} else if (type == NetSendFile) {
+						} else if (type == NET_SEND_FILE) {
 							recSendFile(buf, client, 0);
-						} else if (type == NetNotifyFiles) {
+						} else if (type == NET_NOTIFY_FILES) {
 							recNotifyFiles(buf, server, uuid);
 						} else {
 							log::out << log::RED << "Client Received Unknown Message\n";
@@ -807,22 +1066,22 @@ namespace unisync {
 				if (serverConn) {
 					if (server) {
 						server->stop();
-						serverConn->set(StateConnConnecting, false);
-						serverConn->set(StateConnLinked, false);
-						serverConn->set(StateConnFailed, false);
+						serverConn->set(STATUS_CON_CONNECTING, false);
+						serverConn->set(STATUS_CON_LINKED, false);
+						serverConn->set(STATUS_CON_FAILED, false);
 					}
 				}
 				
 				if (conn->m_ip.empty())
 					conn->m_ip = "127.0.0.1";
 				bool yes = client->start(conn->m_ip, conn->m_port);
-				conn->set(StateConnReconnect, false);
-				conn->set(StateConnFailed, false);
+				conn->set(STATUS_CON_RECONNECT, false);
+				conn->set(STATUS_CON_FAILED, false);
 				if (yes) {
 					clientConn = conn;
-					conn->set(StateConnConnecting,true);
+					conn->set(STATUS_CON_CONNECTING,true);
 				} else {
-					conn->set(StateConnFailed, true);
+					conn->set(STATUS_CON_FAILED, true);
 					log::out << "IP/Port was invalid '" <<conn->m_ip<<":" <<conn->m_port << "'\n";
 				}
 			} else if (client) {
@@ -833,19 +1092,19 @@ namespace unisync {
 		}
 	}
 	bool SyncApp::mainAction() {
-		return engone::IsKeybindingPressed(KeyMainAction) && line == selectedLine && !editingText;
+		return inputModule.isKeyPressed(KeyMainAction) && line == selectedLine && !editingText;
 	}
 	void SyncApp::synchronizeUnits() {
 		using namespace engone;
 		if (client||server) {
 			MessageBuffer buf;
-			buf.push(NetSynchronizeUnits);
+			buf.push(NET_SYNC_UNITS);
 
 			//-- find valid and non-frozen units
-			uint32_t unitSize = 0;
+			u32 unitSize = 0;
 			for (int i = 0; i < userCache.getUnits().size(); i++) {
 				SyncUnit* unit = userCache.getUnits()[i];
-				if (!unit->check(StateUnitFrozen) && unit->validRoot())
+				if (!unit->check(STATUS_UNIT_FROZEN) && unit->validRoot())
 					unitSize++;
 			}
 			//-- send units
@@ -853,7 +1112,7 @@ namespace unisync {
 			//log::out << "UNITSIZE " << unitSize << "\n";
 			for (int i = 0; i < userCache.getUnits().size(); i++) {
 				SyncUnit* unit = userCache.getUnits()[i];
-				if (unit->check(StateUnitFrozen) || !unit->validRoot()) continue;
+				if (unit->check(STATUS_UNIT_FROZEN) || !unit->validRoot()) continue;
 				buf.push(unit->m_name);
 				buf.push(unit->m_password);
 				buf.push(unit->m_status);
@@ -870,7 +1129,7 @@ namespace unisync {
 	void SyncApp::reconnect() {
 		for (int i = 0; i < userCache.getConnections().size(); i++) {
 			SyncConnection* conn = userCache.getConnections()[i];
-			if (conn->check(StateConnReconnect)) {
+			if (conn->check(STATUS_CON_RECONNECT)) {
 				linkConnection(conn);
 			}
 		}
@@ -880,49 +1139,21 @@ namespace unisync {
 			unit->refresh();
 		}
 	}
-	void SyncApp::onClose(engone::Window* window){
-		userCache.save();
-		if (client) {
-			client->stop();
-		}
-		if (server) {
-			server->stop();
-		}
-		m_window = nullptr;
-		stop();
-	};
-	void SyncApp::update(engone::LoopInfo& info) {
-		using namespace engone;
-		if (upCooldown > 0) upCooldown -= info.timeStep;
-		if (downCooldown > 0) downCooldown -= info.timeStep;
-		if ((IsKeybindingDown(KeyUp) && upCooldown <= 0) || IsKeybindingPressed(KeyUp)) {
-			upCooldown = 0.2;
-			editingText = false;
-			selectedLine--;
-		}
-		if ((IsKeybindingDown(KeyDown) && downCooldown <= 0) || IsKeybindingPressed(KeyDown)) {
-			downCooldown = 0.2;
-			editingText = false;
-			selectedLine++;
-		}
-
-		if (options & AutoRefresh) {
-			for (int i = 0; i < userCache.getUnits().size(); i++) {
-				if (userCache.getUnits()[i]->m_wasRefreshed) {
-					m_shouldSynchronize = true;
-					userCache.getUnits()[i]->m_wasRefreshed = false;
-				}
-			}
-		}
-		if (m_shouldSynchronize) {
-			synchronizeUnits();
-			m_shouldSynchronize = false;
-		}
-	}
+	// void SyncApp::onClose(engone::Window* window){
+	// 	userCache.save();
+	// 	if (client) {
+	// 		client->stop();
+	// 	}
+	// 	if (server) {
+	// 		server->stop();
+	// 	}
+	// 	m_window = nullptr;
+	// 	stop();
+	// };
 	void SyncApp::pendSynchronize() {
 		m_shouldSynchronize = true;
 	}
-	void SyncApp::render(engone::LoopInfo& info) {
+	void RenderApp(SyncApp* app) {
 		using namespace engone;
 
 		//chickenY += 1;
@@ -935,145 +1166,147 @@ namespace unisync {
 		int indentDepth = 2;
 
 		// FEATURE: flag which relocates and syncs units when window loses focus.
-		if (info.window->hasFocus() && !hadFocus) {
+        int hasFocus = glfwGetWindowAttrib(app->window, GLFW_FOCUSED);
+		if (hasFocus && !app->hadFocus) {
 			log::out << "SyncApp::render - gained focus\n"; // debug stuff?
 			//if (autoFeatures) {
-			refreshUnits();
-			synchronizeUnits();
+			app->refreshUnits();
+			app->synchronizeUnits();
 			//}
 		}
-		hadFocus = info.window->hasFocus();
+		app->hadFocus = hasFocus;
 
-		selectedLine -= IsScrolledY();
+		app->selectedLine -= app->inputModule.getScrollY();
 
-		if (selectedLine < 0)
-			selectedLine = 0;
-		if (selectedLine > line - 1)
-			selectedLine = line - 1;
+		if (app->selectedLine < 0)
+			app->selectedLine = 0;
+		if (app->selectedLine > app->line - 1)
+			app->selectedLine = app->line - 1;
 
-		std::string fileDrop = PollPathDrop();
+		std::string fileDrop = "";
+        //TODO: PollPathDrop();
 
-		indent = 0;
-		line = 0;
+		app->indent = 0;
+		app->line = 0;
 
-		int top = (selectedLine + scrollY);
-		int maxLine = GetHeight() / lineHeight;
+		int top = (app->selectedLine + app->scrollY);
+		int maxLine = app->winHeight / app->lineHeight;
 		if (top < 1) {
-			scrollY++;
+			app->scrollY++;
 		}
 		if (top > maxLine - 3) {
-			scrollY--;
+			app->scrollY--;
 		}
-		renderText("Connections");
-		for (int i = 0; i < userCache.getConnections().size(); i++) {
-			SyncConnection* conn = userCache.getConnections()[i];
+		app->renderText("Connections");
+		for (int i = 0; i < app->userCache.getConnections().size(); i++) {
+			SyncConnection* conn = app->userCache.getConnections()[i];
 			
-			indent = indentDepth;
-			openAction(conn);
-			if (mainAction()) {
-				linkConnection(conn);
+			app->indent = indentDepth;
+			app->openAction(conn);
+			if (app->mainAction()) {
+				app->linkConnection(conn);
 			}
-			editAction(conn->m_name);
-			if (IsKeybindingPressed(KeyDelete) && line == selectedLine && !editingText) {
+			app->editAction(conn->m_name);
+			if (app->inputModule.isKeyPressed(KeyDelete) && app->line == app->selectedLine && !app->editingText) {
 				delete conn;
-				GetTracker().untrack(conn);
-				userCache.getConnections().erase(userCache.getConnections().begin() + i);
+				// GetTracker().untrack(conn);
+				app->userCache.getConnections().erase(app->userCache.getConnections().begin() + i);
 				i--;
 				continue;
 			}
-			renderPart(conn);
+			app->renderPart(conn);
 
-			if (conn->m_status & StateOpen) {
-				indent = 2* indentDepth;
-				if (mainAction()) {
+			if (conn->m_status & STATUS_OPEN) {
+				app->indent = 2* indentDepth;
+				if (app->mainAction()) {
 					// prevent changing type during a connection
-					if (conn != serverConn && conn != clientConn && conn != waitingServer && conn != waitingClient) {
-						if (conn->m_status & StateServerType) {
-							conn->m_status = conn->m_status & (~StateServerType);
+					if (conn != app->serverConn && conn != app->clientConn && conn != app->waitingServer && conn != app->waitingClient) {
+						if (conn->m_status & STATUS_CON_IS_SERVER) {
+							conn->m_status = conn->m_status & (~STATUS_CON_IS_SERVER);
 						} else {
-							conn->m_status = conn->m_status | (StateServerType);
+							conn->m_status = conn->m_status | (STATUS_CON_IS_SERVER);
 						}
 					}
 				}
-				if (conn->m_status & StateServerType) {
-					renderText("Type: Server");
+				if (conn->m_status & STATUS_CON_IS_SERVER) {
+					app->renderText("Type: Server");
 				} else {
-					renderText("Type: Client");
+					app->renderText("Type: Client");
 				}
-				editAction(conn->m_ip);
-				renderText("IP: ", conn->m_ip);
-				editAction(conn->m_port);
-				renderText("Port: ", conn->m_port);
+				app->editAction(conn->m_ip);
+				app->renderText("IP: ", conn->m_ip);
+				app->editAction(conn->m_port);
+				app->renderText("Port: ", conn->m_port);
 			}
 		}
-		indent =  indentDepth;
-		if (mainAction()) {
+		app->indent =  indentDepth;
+		if (app->mainAction()) {
 			SyncConnection* conn = new SyncConnection();
-			userCache.getConnections().push_back(conn);
-			GetTracker().track(conn);
+			app->userCache.getConnections().push_back(conn);
+			// GetTracker().track(conn);
 		}
-		renderText("+");
+		app->renderText("+");
 
-		indent = 0;
+		app->indent = 0;
 
-		renderText("Units");
+		app->renderText("Units");
 
-		for (int i = 0; i < userCache.getUnits().size(); i++) {
-			SyncUnit* unit = userCache.getUnits()[i];
+		for (int i = 0; i < app->userCache.getUnits().size(); i++) {
+			SyncUnit* unit = app->userCache.getUnits()[i];
 		
-			indent = indentDepth;
-			openAction(unit);
-			editAction(unit->m_name);
-			if (IsKeybindingPressed(KeyDelete) && line == selectedLine && !editingText) {
+			app->indent = indentDepth;
+			app->openAction(unit);
+			app->editAction(unit->m_name);
+			if (app->inputModule.isKeyPressed(KeyDelete) && app->line == app->selectedLine && !app->editingText) {
 				delete unit;
-				GetTracker().untrack(unit);
-				userCache.getUnits().erase(userCache.getUnits().begin() + i);
+				// GetTracker().untrack(unit);
+				app->userCache.getUnits().erase(app->userCache.getUnits().begin() + i);
 				i--;
 				continue;
 			}
-			if (IsKeybindingPressed(KeyFreeze) && line == selectedLine && !editingText) {
-				unit->set(StateUnitFrozen, !unit->check(StateUnitFrozen));
+			if (app->inputModule.isKeyPressed(KeyFreeze) && app->line == app->selectedLine && !app->editingText) {
+				unit->set(STATUS_UNIT_FROZEN, !unit->check(STATUS_UNIT_FROZEN));
 			}
-			renderPart(unit);
+			app->renderPart(unit);
 
-			if (unit->m_status & StateOpen) {
-				indent = 2 * indentDepth;
-				editAction(unit->m_password);
-				renderText("Password: ", unit->m_password);
+			if (unit->m_status & STATUS_OPEN) {
+				app->indent = 2 * indentDepth;
+				app->editAction(unit->m_password);
+				app->renderText("Password: ", unit->m_password);
 
-				bool wasEditing = editingText;
+				bool wasEditing = app->editingText;
 				unit->lock(); // lock when using root
-				editAction(unit->m_root);
-				if (editingText && line == selectedLine) {
+				app->editAction(unit->m_root);
+				if (app->editingText && app->line == app->selectedLine) {
 					if (!fileDrop.empty()) {
 						unit->m_root = fileDrop;
-						editingIndex = unit->m_root.length();
+						app->editingIndex = unit->m_root.length();
 					}
 				}
 				unit->unlock();
-				if (wasEditing && !editingText) {
+				if (wasEditing && !app->editingText) {
 					// stopped editing, relocate unit
 					unit->refresh();
 					unit->startMonitor(); // update monitor if root changed
 				}
 				unit->lock(); // lock when changing or using files
-				renderText("Root: ", unit->m_root);
+				app->renderText("Root: ", unit->m_root);
 
 				if (unit->m_files.size() == 0) {
-					renderText("No Files");
+					app->renderText("No Files");
 				} else {
-					renderText("Files " + std::to_string(unit->m_files.size()));
+					app->renderText("Files " + std::to_string(unit->m_files.size()));
 
-					indent = 3 * indentDepth;
+					app->indent = 3 * indentDepth;
 					std::string closed = "";
 					bool flagOverride = 0;
-					uint32_t minFlagIndent = -1; // -1 ignore
+					u32 minFlagIndent = -1; // -1 ignore
 					for (int j = 0; j < unit->m_files.size(); j++) {
 						SyncFile* file = &unit->m_files[j];
 						
 						// ISSUE: if file is below window break
 
-						indent = 3 * indentDepth;
+						app->indent = 3 * indentDepth;
 						bool subOfClosed = false;
 						if (closed.length() < file->m_name.length() && !closed.empty()) {
 							subOfClosed = true;
@@ -1088,83 +1321,83 @@ namespace unisync {
 							}
 						}
 						int lastIndex = 0;
-						int _indent = indent- indentDepth; // all files have \\ in the beginning so -indentDepth to skip it.
+						int _indent = app->indent - indentDepth; // all files have \\ in the beginning so -indentDepth to skip it.
 						for (int k = 0; k < file->m_name.length(); k++) {
 							if (file->m_name[k] == '\\') {
 								_indent+= indentDepth;
 								lastIndex = k;
 							}
 						}
-						indent = _indent;
+						app->indent = _indent;
 
-						if (indent > minFlagIndent) { // note that -1 as unsigned will be larger than any number
-							file->set(StateFileOverride, flagOverride);
-							pendSynchronize();
+						if (app->indent > minFlagIndent) { // note that -1 as unsigned will be larger than any number
+							file->set(STATUS_FILE_OVERRIDE, flagOverride);
+							app->pendSynchronize();
 						} else {
 							minFlagIndent = -1;
 						}
 						if (subOfClosed)
 							continue;
 
-						if ((!file->check(StateOpen) || file->check(StateFileDeleted)) && file->isDir) {
+						if ((!file->check(STATUS_OPEN) || file->check(STATUS_FILE_DELETED)) && file->isDir) {
 							closed = file->m_name;
 						}
-						if (file->check(StateFileDeleted))
+						if (file->check(STATUS_FILE_DELETED))
 							continue;
 						if (file->isDir) {
-							openAction(file);
+							app->openAction(file);
 						}
 
 						std::string path = file->m_name.substr(lastIndex + 1);
 
-						if (IsKeybindingPressed(KeyMainAction) && line == selectedLine && !editingText) {
-							if (file->check(StateFileNew)) {
-								bool yes = !file->check(StateFileOverride);
-								file->set(StateFileOverride, yes);
+						if (app->inputModule.isKeyPressed(KeyMainAction) && app->line == app->selectedLine && !app->editingText) {
+							if (file->check(STATUS_FILE_NEW)) {
+								bool yes = !file->check(STATUS_FILE_OVERRIDE);
+								file->set(STATUS_FILE_OVERRIDE, yes);
 								if(yes)
-									pendSynchronize();
+									app->pendSynchronize();
 								if (file->isDir) {
 									flagOverride = yes;
-									minFlagIndent = indent;
+									minFlagIndent = app->indent;
 								}
 							}
 						}
-						if (IsKeybindingPressed(KeyFreeze) && line == selectedLine && !editingText) {
-							file->set(StateFileFrozen, !file->check(StateFileFrozen));
-							if (!file->check(StateFileFrozen)&&file->check(StateFileOverride))
-								pendSynchronize();
+						if (app->inputModule.isKeyPressed(KeyFreeze) && app->line == app->selectedLine && !app->editingText) {
+							file->set(STATUS_FILE_FROZEN, !file->check(STATUS_FILE_FROZEN));
+							if (!file->check(STATUS_FILE_FROZEN)&&file->check(STATUS_FILE_OVERRIDE))
+								app->pendSynchronize();
 						}
-						if (IsKeybindingPressed(KeyMelt) && line == selectedLine && !editingText) {
-							file->set(StateFileMelted, !file->check(StateFileMelted));
+						if (app->inputModule.isKeyPressed(KeyMelt) && app->line == app->selectedLine && !app->editingText) {
+							file->set(STATUS_FILE_MELTED, !file->check(STATUS_FILE_MELTED));
 						}
 						if (file->isDir) {
-							indent--;
-							if (file->check(StateOpen))
-								renderText("+");
+							app->indent--;
+							if (file->check(STATUS_OPEN))
+								app->renderText("+");
 							else
-								renderText("-");
-							indent++;
-							line--;
-							renderText(path);
-							renderState(path, file->m_status);
+								app->renderText("-");
+							app->indent++;
+							app->line--;
+							app->renderText(path);
+							app->renderState(path, file->m_status);
 						} else {
-							renderText(path);
-							renderState(path, file->m_status);
+							app->renderText(path);
+							app->renderState(path, file->m_status);
 						}
 					}
-					indent = 3 * indentDepth;
+					app->indent = 3 * indentDepth;
 				}
 				unit->unlock();
 			}
 		}
-		indent = 1 * indentDepth;
-		if (mainAction()) {
+		app->indent = 1 * indentDepth;
+		if (app->mainAction()) {
 			SyncUnit* unit = new SyncUnit();
-			userCache.getUnits().push_back(unit);
-			GetTracker().track(unit);
+			app->userCache.getUnits().push_back(unit);
+			// GetTracker().track(unit);
 		}
-		renderText("+");
+		app->renderText("+");
 
-		indent = 0;
+		app->indent = 0;
 	}
 }
