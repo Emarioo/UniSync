@@ -111,7 +111,8 @@ namespace unisync {
 
 		for (int i = foundFiles.size() - 1; i >= 0; i--) {
 			if (!foundFiles[i]) {
-				m_files[i].m_status |= STATUS_FILE_DELETED;
+                m_files[i].set(STATUS_FILE_DELETED);
+				// m_files[i].m_status = (Status)(STATUS_FILE_DELETED | m_files[i].m_status);
 				//m_files.erase(m_files.begin() + i);
 				refreshed = true;
 			}

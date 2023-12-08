@@ -10,9 +10,9 @@ namespace unisync {
 
 		void set(Status state, bool on = true) {
 			if (on) {
-				m_status = m_status | state;
+				m_status = (Status)(m_status | state);
 			} else {
-				m_status = m_status & (~state);
+				m_status = (Status)(m_status & (~state));
 			}
 		}
 		bool check(Status state) {

@@ -138,8 +138,8 @@ namespace unisync {
             
             Status tempState = conn->m_status;
             if (conn->m_status & (STATUS_CON_LINKED | STATUS_CON_FAILED | STATUS_CON_CONNECTING))
-                tempState = tempState | STATUS_CON_RECONNECT;
-            tempState = tempState & (~(STATUS_CON_LINKED | STATUS_CON_FAILED | STATUS_CON_CONNECTING));
+                tempState = (Status)(tempState | STATUS_CON_RECONNECT);
+            tempState = (Status)(tempState & (~(STATUS_CON_LINKED | STATUS_CON_FAILED | STATUS_CON_CONNECTING)));
             
             WRITE(&tempState, tempState)
             WRITES(conn->m_ip)
@@ -192,6 +192,17 @@ namespace unisync {
         save_err:
         engone::FileClose(file);
     }
+    SyncUnit* UserCache::getUnit(const std::string& name) {
+		for (int i = 0; i < m_units.size(); i++) {
+			if (!m_units[i]->validRoot())
+				continue;
+			if (name == m_units[i]->m_name) {
+				return m_units[i];
+			}
+		}
+		return nullptr;
+	}
+    #ifdef DEPRECATED
 	void UserCache::load_old() {
 		using namespace engone;
 		FileReader file(m_path);
@@ -213,7 +224,9 @@ namespace unisync {
 				// GetTracker().track(conn);
 				m_connections.push_back(conn);
 				file.read(&conn->m_name);
-				file.read(&conn->m_status);
+                int status = 0;
+				file.read(&status);
+                conn->m_status = (Status)status;
 				file.read(&conn->m_ip);
 				file.read(&conn->m_port);
 
@@ -231,7 +244,9 @@ namespace unisync {
 				// GetTracker().track(unit);
 				m_units.push_back(unit);
 				file.read(&unit->m_name);
-				file.read(&unit->m_status);
+                int status = 0;
+				file.read(&status);
+                unit->m_status = (Status)status;
 				file.read(&unit->m_password);
 				file.read(&unit->m_root);
 				file.read(&unit->m_timestamp);
@@ -241,7 +256,9 @@ namespace unisync {
 					unit->m_files.push_back({});
 					SyncFile& sfile = unit->m_files[j];
 					file.read(&sfile.m_name);
-					file.read(&sfile.m_status);
+                    int status = 0;
+                    file.read(&status);
+                    sfile.m_status = (Status)status;
 					file.read(&sfile.m_timestamp);
 					file.read(&sfile.isDir);
 				}
@@ -266,8 +283,8 @@ namespace unisync {
 				file.write(&conn->m_name);
 				Status tempState = conn->m_status;
 				if (conn->m_status & (STATUS_CON_LINKED | STATUS_CON_FAILED | STATUS_CON_CONNECTING))
-					tempState = tempState | STATUS_CON_RECONNECT;
-				tempState = tempState & (~(STATUS_CON_LINKED | STATUS_CON_FAILED | STATUS_CON_CONNECTING));
+					tempState = (Status)(tempState | STATUS_CON_RECONNECT);
+				tempState = (Status)(tempState & (~(STATUS_CON_LINKED | STATUS_CON_FAILED | STATUS_CON_CONNECTING)));
 				file.write(&tempState);
 				file.write(&conn->m_ip);
 				file.write(&conn->m_port);
@@ -302,14 +319,6 @@ namespace unisync {
 			log::out << "Cache save: " << err << "\n";
 		}
 	}
-	SyncUnit* UserCache::getUnit(const std::string& name) {
-		for (int i = 0; i < m_units.size(); i++) {
-			if (!m_units[i]->validRoot())
-				continue;
-			if (name == m_units[i]->m_name) {
-				return m_units[i];
-			}
-		}
-		return nullptr;
-	}
+    #endif
+	
 }

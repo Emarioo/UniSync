@@ -68,10 +68,10 @@ void runApp(int argc, const char** argv) {
             print_args = true;
         } else if(streq(arg, "--file") || streq(arg, "-f")) {
             if(i + 1 < argc) {
-                log::out << log::RED << "Missing flag for '"<<arg<<"'\n";
-            } else {
                 options.cachePath = argv[i + 1];
                 i++;
+            } else {
+                log::out << log::RED << "Missing flag for '"<<arg<<"'\n";
             }
         } else if(streq(arg, "--help") || streq(arg, "-help") || streq(arg, "-?") || streq(arg, "-h")) {
             PrintHelp();

@@ -55,7 +55,7 @@ namespace unisync {
 	// FEATURE: Auto reconnect after a few seconds so that you have time to turn of the reconnection.
 
     struct AppOptions {
-        std::string cachePath; // ".unisync"
+        std::string cachePath = DEFAULT_FILE;
     };
 
     struct SyncApp;

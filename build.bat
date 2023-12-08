@@ -85,4 +85,6 @@ echo Compilation in %c_finS%.%c_finS2% seconds
 echo Linking in %l_finS%.%l_finS2% seconds
 echo Finished in %finS%.%finS2% seconds
 
-bin\unisync.exe
+@REM bin\unisync.exe
+start bin\unisync.exe --file .unisync-s
+start bin\unisync.exe --file .unisync-c

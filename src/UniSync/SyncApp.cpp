@@ -204,7 +204,6 @@ namespace unisync {
 			app->server->stop();
 		}
 		app->window = nullptr;
-		// stop();
     
         glfwDestroyWindow(window);
         glfwTerminate();
@@ -235,7 +234,16 @@ namespace unisync {
 		server = nullptr;
 		delete client;
 		client = nullptr;
-        engone::log::out << engone::log::RED << "SyncApp CLEANUP INCOMPLETE\n";
+        for(auto& pair : fileDownloads) {
+            delete pair.second.writer;
+        }
+        
+        if(window) {
+            glfwDestroyWindow(window);
+            glfwTerminate();
+	    	window = nullptr;
+        }
+        // engone::log::out << engone::log::RED << "SyncApp CLEANUP INCOMPLETE\n";
     }
 	void SyncApp::init(const AppOptions& appOptions) {
 		using namespace engone;
@@ -348,10 +356,12 @@ namespace unisync {
 		if (editingText)
 			return;
 		if (inputModule.isKeyPressed(KeyOpen) && selectedLine == line) {
-			part->m_status = part->m_status | STATUS_OPEN;
+            part->set(STATUS_OPEN);
+			// part->m_status = part->m_status | STATUS_OPEN;
 		}
 		if (inputModule.isKeyPressed(KeyClose) && selectedLine == line) {
-			part->m_status = part->m_status & (~STATUS_OPEN);
+            part->set(STATUS_OPEN, false);
+			// part->m_status = part->m_status & (~STATUS_OPEN);
 		}
 	}
 	// check if path contains .. if it does, the program could alter files above the root directory. That would be a security issue.
@@ -504,6 +514,8 @@ namespace unisync {
 		if (!unit) {
 			return;
 		}
+        unit->refresh(); // ensure that the files we have receive the NEW status (if they should have it)
+        // TODO: Files may be modified in between here. That's no good.
 		unit->lock();
 		if (password != unit->m_password) {
 			log::out << log::YELLOW << "Received wrong password\n";
@@ -539,7 +551,7 @@ namespace unisync {
 					if (unit->m_status & STATUS_UNIT_FROZEN) {
 						if (!(unit->m_status & STATUS_FILE_MELTED))
 							break;
-					}else if (file.m_status & STATUS_FILE_FROZEN)
+					} else if (file.m_status & STATUS_FILE_FROZEN)
 						break;
 
 					//log::out << file.m_status << " - "<<state<<"\n";
@@ -553,6 +565,7 @@ namespace unisync {
 								fileRequests.push_back(fileName);
 								//log::out << "override2\n";
 							} else {
+                                log::out << "collision "<<fileName<<"\n";
 								file.set(STATUS_FILE_COLLISION);
 								if (!(state & STATUS_FILE_COLLISION))
 									fileNotifications.push_back(fileName);
@@ -1222,9 +1235,11 @@ namespace unisync {
 					// prevent changing type during a connection
 					if (conn != app->serverConn && conn != app->clientConn && conn != app->waitingServer && conn != app->waitingClient) {
 						if (conn->m_status & STATUS_CON_IS_SERVER) {
-							conn->m_status = conn->m_status & (~STATUS_CON_IS_SERVER);
+                            conn->set(STATUS_CON_IS_SERVER, false);
+							// conn->m_status = conn->m_status & (~STATUS_CON_IS_SERVER);
 						} else {
-							conn->m_status = conn->m_status | (STATUS_CON_IS_SERVER);
+                            conn->set(STATUS_CON_IS_SERVER);
+							// conn->m_status = conn->m_status | (STATUS_CON_IS_SERVER);
 						}
 					}
 				}

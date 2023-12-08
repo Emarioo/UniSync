@@ -4,7 +4,7 @@
 
 namespace unisync {
 
-	// NOTE: if you change existing values, the cache would be invalid
+	// IMPORTANT: Do not rearrange or add new enums in the middle. Statuses in files will end up with different meanings.
 	enum Status : int {
 		// General states
 		STATUS_NONE = 0x000,
@@ -26,7 +26,6 @@ namespace unisync {
 		STATUS_FILE_FROZEN = 0x800, // This file is frozen
 		STATUS_FILE_DELETED = 0x1000, // indicates that the file is deleted
 	};
-	typedef int Status;
 	enum SyncNet : int {
 		//None = 0,
 		NET_SYNC_UNITS = 1, // send all files for which units?
