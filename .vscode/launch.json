@@ -5,6 +5,31 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "main.exe",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
             "name": "(Windows) Launch",
             "type": "cppvsdbg",
             "request": "launch",
@@ -12,6 +37,33 @@
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceRoot}",
+            "environment": [],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "VS btb.exe",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/BetterThanBatch/bin/btb.exe",
+            // "args": ["-twe","*switch*"],
+            "args": ["src/main"],
+            // "args": ["${workspaceFolder}/../EnderCompute/src/webserver"],
+            // "args": ["examples/dev","-nothreads"],
+            // "args": ["sound.btb", "-o", "sound.dll", "-l", "msvc"],
+            // "args": ["examples/crawler/GameCore","-d","-o","bin/code.dll"],
+            // "args": ["prepare_release","--run"],
+            // "args": ["-dev","-nopreload"],
+            // "args": ["--test","*switch.*"],
+            // "args": ["-dev","-nopreload"],
+            // "args": ["--test"],
+            // "args": ["-pm","*typeinfo.btb","-g","-r","-o","dev.exe"],
+            // "args": ["-pm", "dev*"],
+            // "args": ["-dev"],
+            // "args": ["examples/dev.btb","-g"],
+            // "args": [""],
+            // "args": ["oi.btb"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
             "environment": [],
             "console": "integratedTerminal"
         }

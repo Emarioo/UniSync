@@ -1,2 +1,43 @@
-bin/
-logs/
+# Ignore Linux executables in root (they rarely have a file extensions)
+/*
+!*.*
+!*/
+
+# Ignore generated binaries
+bin
+*.exe
+*.exp
+*.def
+*.lib
+*.dll
+*.a
+*.so
+# we want to match with glfw.so.3.3.9 too
+*.so.*
+.vs
+*.ilk
+*.obj
+*.o
+*.out
+*.obj
+*.pdb
+
+# Don't ignore files from libs
+!libs/**
+
+# Ignore logging
+out
+logs
+*.log
+
+# Ignore temporary C/C++ files from root
+/*.cpp
+/*.c
+/*.s
+/*.asm
+
+# symlink
+BetterThanBatch
+
+# unisync user settings
+*.usbt

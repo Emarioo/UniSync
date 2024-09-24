@@ -1,0 +1,7 @@
+#import "Logger"
+
+#import "./serial"
+
+fn main() {
+    test_serialize_settings()
+}

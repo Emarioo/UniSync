@@ -1,0 +1,42 @@
+/*
+    This file contains structures and enums.
+*/
+
+#import "String"
+#import "Array"
+#import "BucketArray"
+
+struct SyncConnection {
+    name: StringBuilder;
+    // status, flags
+    
+    ip: StringBuilder;
+    port: u16;
+}
+
+struct SyncUnit {
+    name: StringBuilder;
+    // status, flags
+    
+    root: StringBuilder;
+    files: BucketArray<SyncFile>;
+    // file monitor
+    
+    fn cleanup() {
+        name.cleanup()
+        root.cleanup()
+        files.cleanup()
+    }
+}
+struct SyncFile {
+    timestamp: u64;
+    is_dir: bool;
+    path: StringBuilder; // relative to root
+    // hash
+}
+struct UserSettings {
+    loaded_from_path: StringBuilder; // where the user settings was loaded from, can be empty
+    
+    connections: Array<SyncConnection>;
+    units: Array<SyncUnit>
+}

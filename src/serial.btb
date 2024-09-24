@@ -1,0 +1,240 @@
+/*
+    This file contains code for serializing data
+*/
+
+#import "./defs"
+#import "Stream"
+#import "Logger"
+
+#macro FILE_MAGIC 0x54425355 // USUS, UniSync User Settings
+struct SyncHeader {
+    magic: i32;
+    version: i32;
+    checksum: i32; // set checksum to zero before computing it
+    
+    connection_count: i32;
+    connection_offset: i32; // offset from start of file
+    unit_count: i32;
+    unit_offset: i32; // offset from start of file
+}
+
+fn compute_checksum(data: void*, size: i32) -> i32 {
+    // TODO: Improve, maybe use sha-1 altough that might be going overboard
+    return size
+}
+
+fn load_user_settings(path: char[], settings: UserSettings*) -> bool {
+    stream: ByteStream
+    defer stream.cleanup()
+    
+    fin_data: void*;
+    fin_size: i32;
+    {
+        filesize: i64
+        file := FileOpen(path, FILE_READ_ONLY, &filesize)
+        if !file {
+            return false
+        }
+        fin_size = filesize
+        fin_data = stream.write_late(filesize)
+        FileRead(file, fin_data, filesize)
+        FileClose(file)
+    }
+    offset: i32
+    header: SyncHeader
+    stream.read(&offset, &header, sizeof(header))
+    
+    if header.magic != FILE_MAGIC {
+        magic := FILE_MAGIC
+        bad_magic: char[] = {cast_unsafe<char*>&header.magic, 4}
+        expected_magic: char[] = {cast_unsafe<char*>&magic, 4}
+        log("Magic number is wrong, ", bad_magic, " != ", expected_magic)
+        return false
+    }
+    if header.version != 1 {
+        log("File version not supported, ", header.version," != ", 1)
+        return false
+    }
+    checksum := header.checksum
+    header.checksum = 0
+    real_sum := compute_checksum(fin_data, fin_size)
+    if checksum != real_sum {
+        log("Checksum is wrong, ", checksum, " != ", real_sum)
+        return false   
+    }
+    
+    offset = header.connection_offset
+    settings.connections.reserve(header.connection_count)
+    for 0..header.connection_count {
+        it := settings.connections.add()
+        stream.read_string8(&offset, &it.name)
+        stream.read_string8(&offset, &it.ip)
+        stream.read<u16>(&offset, &it.port)
+    }
+    
+    offset = header.unit_offset
+    settings.units.reserve(header.unit_count)
+    for 0..header.unit_count {
+        it := settings.units.add()
+        stream.read_string8(&offset, &it.name)
+        stream.read_string16(&offset, &it.root)
+        file_count: i32
+        stream.read<i32>(&offset, &file_count)
+        
+        it.files.init(128)
+        
+        for 0..file_count {
+            file := it.files.add(null)
+            
+            stream.read(&offset, &file.timestamp)
+            stream.read(&offset, &file.is_dir)
+            stream.read_string16(&offset, &file.path)
+        }
+    }
+    
+    return true
+}
+fn save_user_settings(path: char[], settings: UserSettings*) -> bool {
+    stream: ByteStream
+    defer stream.cleanup()
+    header: SyncHeader* = stream.write_late(sizeof SyncHeader)
+    
+    header.magic = FILE_MAGIC
+    header.version = 1
+    header.checksum = 0 // TODO: What checksum do we use?
+    
+    header.connection_count = settings.connections.size()
+    header.unit_count = settings.units.size()
+    
+    header.connection_offset = stream.get_write_head()
+    
+    for settings.connections.sliced() {
+        stream.write_string8(it.name.sliced())
+        stream.write_string8(it.ip.sliced())
+        stream.write<u16>(it.port)
+    }
+    
+    stream.write_alignment(4)
+    
+    header.unit_offset = stream.get_write_head()
+    
+    for unit: settings.units.sliced() {
+        stream.write_string8(unit.name.sliced())
+        stream.write_string16(unit.root.sliced())
+        stream.write<i32>(unit.files.getCount())
+        
+        iter := unit.files.create_iterator()
+        while unit.files.iterate(&iter) {
+            file := iter.ptr
+            
+            stream.write(file.timestamp)
+            stream.write(file.is_dir)
+            stream.write_string16(file.path)
+        }
+    }
+    
+    fin_ptr: void*;
+    fin_size: i32;
+    yes := stream.finalize(&fin_ptr, &fin_size)
+    if !yes {
+        return false
+    }
+    header = fin_ptr
+    header.checksum = compute_checksum(fin_ptr, fin_size)
+    
+    file := FileOpen(path, FILE_CLEAR_AND_WRITE)
+    if !file {
+        return false
+    }
+    defer FileClose(file)
+    
+    iter := stream.create_iterator()
+    while stream.iterate(&iter) {
+        FileWrite(file, iter.ptr, iter.size)
+    }
+    return true
+}
+
+fn test_serialize_settings() {
+    fn equal_bytes(a: UserSettings*, b: UserSettings*) -> bool {
+        // not included in the file because we allow the user to
+        // move user settings file without breaking stuff
+        // if a.loaded_from_path != b.loaded_from_path {
+        //     return false
+        // }
+        if a.connections.size() != b.connections.size() {
+            return false
+        }
+        for 0..a.connections.size() {
+            ca := a.connections.get_unsafe(nr)
+            cb := b.connections.get_unsafe(nr)
+            if ca.name != cb.name {
+                return false
+            }
+            if ca.ip != cb.ip {
+                return false
+            }
+            if ca.port != cb.port {
+                return false
+            }
+        }
+        if a.units.size() != b.units.size() {
+            return false
+        }
+        for 0..a.units.size() {
+            ca := a.units.get_unsafe(nr)
+            cb := b.units.get_unsafe(nr)
+            if ca.name != cb.name {
+                return false
+            }
+            if ca.root != cb.root {
+                return false
+            }
+            if ca.files.getCount() != cb.files.getCount() {
+                return false
+            }
+            iter_a := ca.files.create_iterator()
+            iter_b := cb.files.create_iterator()
+            while {
+                yes_a := ca.files.iterate(&iter_a)
+                yes_b := cb.files.iterate(&iter_b)
+                if !yes_a && !yes_b {
+                    break
+                }
+                if yes_a != yes_b {
+                    return false
+                }
+                fa := iter_a.ptr
+                fb := iter_b.ptr
+                if fa.timestamp != fb.timestamp {
+                    return false
+                }
+                if fa.is_dir != fb.is_dir {
+                    return false
+                }
+                if fa.path != fb.path {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+    in: UserSettings
+    out: UserSettings
+    
+    in.loaded_from_path.append("home")
+    
+    path := "test_settings.usbt"
+    
+    save_user_settings(path, &in)
+    load_user_settings(path, &out)
+    
+    yes := equal_bytes(&in, &out)
+    if !yes {
+        log("Fail")
+        std_print("IN: ") std_print_any(&in, true) log()
+        std_print("OUT: ") std_print_any(&out, true) log()
+    } else {
+        log("Pass")
+    }
+}
