@@ -1,7 +1,14 @@
 #import "Logger"
 
 #import "./serial"
+#import "./unisync"
 
 fn main() {
-    test_serialize_settings()
+    // test_serialize_settings()
+    
+    options: AppOptions;
+    options.path_settings.append("data")
+    options.use_cli = true
+    
+    start_sync_app(&options)
 }

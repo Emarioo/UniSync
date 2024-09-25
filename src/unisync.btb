@@ -1,0 +1,172 @@
+
+#import "./serial"
+#import "File"
+#import "Logger"
+#import "OS"
+#import "Math"
+#import "Net"
+#import "String"
+#import "Array"
+#import "BucketArray"
+
+struct AppOptions {
+    path_settings: StringBuilder;
+    
+    use_cli: bool;
+    use_gui: bool;
+}
+
+
+struct SyncConnection {
+    name: StringBuilder;
+    // status, flags
+    
+    ip: StringBuilder;
+    port: u16;
+    
+    // TODO: Union
+    server: Server;
+    client: Client;
+}
+
+struct SyncUnit {
+    name: StringBuilder;
+    // status, flags
+    
+    root: StringBuilder;
+    files: BucketArray<SyncFile>;
+    // file monitor
+    
+    fn cleanup() {
+        name.cleanup()
+        root.cleanup()
+        files.cleanup()
+    }
+}
+struct SyncFile {
+    timestamp: u64;
+    is_dir: bool;
+    path: StringBuilder; // relative to root
+    // hash
+}
+
+struct SyncSystem {
+    loaded_from_path: StringBuilder; // where the user settings was loaded from, can be empty
+ 
+    connections: Array<SyncConnection>;
+    units: Array<SyncUnit>
+}
+
+fn create_sync_system() -> SyncSystem* {
+    ptr := cast<SyncSystem*>Allocate(sizeof SyncSystem)
+    construct(ptr)
+    return ptr
+}
+fn destroy_sync_system(system: SyncSystem*) {
+    destruct(system)
+    Free(system)
+}
+
+
+global sync_system: SyncSystem*;
+fn start_sync_app(options: AppOptions*) {
+    log("Starting app")
+    
+    sync_system = create_sync_system()
+    
+    if options.path_settings.size() > 0 {
+        load_user_settings(options.path_settings, sync_system)
+    }
+    
+    // TODO: setup file monitor per SyncUnit
+    // mon: FileMonitor
+    // defer mon.cleanup()
+    // yes := mon.check("test", callback, cast_unsafe<FileMonitorFlags>0, null)
+    // if !yes
+    //     log("monitor failed")
+    // fn callback(change: FileMonitorChange*, user: void*) {
+    //     log(&change.type, " ",change.path)
+    //     // log(change.path)
+    // }
+ 
+    // TODO: Setup auto connections
+ 
+    if options.use_gui {
+        start_gui()   
+    } else if options.use_cli {
+        start_cli()
+    } else {
+        log("GUI or CLI?")
+    }
+}
+
+fn start_cli() {
+    log("Starting cli")
+    // read form stdin
+    
+    // circular buffer
+    buffer_max := 1000
+    buffer: char* = Allocate(buffer_max) // We don't but buffer on stack to avoid stack overflow problems, if we do write beyond the buffer then we will hopefully get a memory access violation.
+    defer Free(buffer)
+    
+    cmd: StringBuilder
+    defer cmd.cleanup()
+    
+    written_bytes := 0
+    read_offset: i32
+    
+    while {
+        has_newline := false
+        for read_offset..written_bytes {
+            chr := buffer[read_offset]
+            read_offset++
+            if chr == '\n' {
+                has_newline = true
+                break
+            }
+        }
+        if !has_newline {
+        #if OS_WINDOWS
+            handle := GetStdHandle(STD_INPUT_HANDLE)
+            bytes_read: i32
+            yes := ReadFile(handle, buffer + read_offset, buffer_max - read_offset, &bytes_read, null)
+            if !yes {
+                err := GetLastError()
+                log("stdin read failed ",err)
+                break
+            }
+        #else
+            // read(STDIN_FILENO, )
+        #endif
+            written_bytes += bytes_read
+            continue
+        }
+        
+        cmd.clear()
+        cmd.append(cast<char*>buffer, read_offset-1) // -1 to skip newline
+        memcpy(buffer, buffer + read_offset, written_bytes - read_offset)
+        written_bytes -= read_offset
+        read_offset = 0
+        
+        // Process command
+        log("> ", cmd)
+        
+        if cmd == "help" {
+            log("Help:")
+            log(" ls - List connection and units")
+            log(" ")
+            // add conection
+            // rename, edit...
+        }
+        /*
+        help
+        ls
+        
+        
+        */
+    }
+}
+fn start_gui() {
+    log("Starting gui")
+    // GLFW init and stuff   
+}

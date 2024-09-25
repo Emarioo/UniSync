@@ -2,7 +2,12 @@
 @setlocal enabledelayedexpansion
 
 set exe=.\BetterThanBatch\bin\btb.exe
-!exe! src/main -d -r
+
+if "%~1"=="run" (
+    !exe! src/main -d
+) else (
+    !exe! src/main -d -r
+)
 
 @REM set WITH_CONSOLE=1
 @REM SET USE_DEBUG=1

@@ -2,7 +2,7 @@
     This file contains code for serializing data
 */
 
-#import "./defs"
+#import "./unisync"
 #import "Stream"
 #import "Logger"
 
@@ -23,7 +23,7 @@ fn compute_checksum(data: void*, size: i32) -> i32 {
     return size
 }
 
-fn load_user_settings(path: char[], settings: UserSettings*) -> bool {
+fn load_user_settings(path: char[], settings: SyncSystem*) -> bool {
     stream: ByteStream
     defer stream.cleanup()
     
@@ -94,7 +94,7 @@ fn load_user_settings(path: char[], settings: UserSettings*) -> bool {
     
     return true
 }
-fn save_user_settings(path: char[], settings: UserSettings*) -> bool {
+fn save_user_settings(path: char[], settings: SyncSystem*) -> bool {
     stream: ByteStream
     defer stream.cleanup()
     header: SyncHeader* = stream.write_late(sizeof SyncHeader)
@@ -156,7 +156,7 @@ fn save_user_settings(path: char[], settings: UserSettings*) -> bool {
 }
 
 fn test_serialize_settings() {
-    fn equal_bytes(a: UserSettings*, b: UserSettings*) -> bool {
+    fn equal_bytes(a: SyncSystem*, b: SyncSystem*) -> bool {
         // not included in the file because we allow the user to
         // move user settings file without breaking stuff
         // if a.loaded_from_path != b.loaded_from_path {
@@ -219,8 +219,8 @@ fn test_serialize_settings() {
         }
         return true
     }
-    in: UserSettings
-    out: UserSettings
+    in: SyncSystem
+    out: SyncSystem
     
     in.loaded_from_path.append("home")
     
