@@ -1,14 +1,58 @@
 #import "Logger"
+#import "File"
 
 #import "./serial"
 #import "./unisync"
 
-fn main() {
+fn main(argc: i32, argv: char**) -> i32 {
     // test_serialize_settings()
+    
+    fn sliced(s: char*) -> char[] {
+        return Slice<char>{s, strlen(s)}
+    }
+    
+    cli_input_file: char[]
+    for 1..argc {
+        arg := sliced(argv[nr])
+        
+        if arg == "-help" || arg == "--help" {
+            log("Help:")
+            // log(" --help : Help information")
+            log(" -i, --input <path> : The content of the file is passed to the REPL part of the program. It's useful in automation.")
+            return 0;
+        } else if arg == "-i" || arg == "--input" {
+            if nr + 1 < argc  {
+                nr++
+                cli_input_file = sliced(argv[nr])
+            }
+        } else {
+            
+        }
+    }
     
     options: AppOptions;
     options.path_settings.append("data")
     options.use_cli = true
     
+    if cli_input_file.len {
+        filesize: i64
+        file := FileOpen(cli_input_file, FILE_READ_ONLY, &filesize)
+        if !file {
+            log("Cannot open '",cli_input_file,"'.")
+        } else {
+            options.cli_input.reserve(filesize + 1)
+            options.cli_input.resize(filesize)
+            yes := FileRead(file, options.cli_input.data(), filesize)
+            FileClose(file)
+            if options.cli_input.size() > 0 && options.cli_input.get(options.cli_input.size()-1) != '\n' {
+                options.cli_input.append('\n')
+                // make sure input of commands end with a newline
+                // otherwise, the last command may be left.
+            }
+        }
+    }
+    
     start_sync_app(&options)
+    
+    return 0
 }

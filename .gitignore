@@ -41,3 +41,6 @@ BetterThanBatch
 
 # unisync user settings
 *.usbt
+
+# testing
+sandbox/

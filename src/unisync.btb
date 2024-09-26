@@ -9,20 +9,29 @@
 #import "Array"
 #import "BucketArray"
 
+#macro DEFAULT_PORT 7687
+
 struct AppOptions {
     path_settings: StringBuilder;
     
     use_cli: bool;
     use_gui: bool;
+    
+    cli_input: StringBuilder;
 }
 
-
+enum SyncConnectionFlags {
+    SYNCCON_NONE      = 0x0,
+    SYNCCON_IS_SERVER = 0x1,
+}
 struct SyncConnection {
     name: StringBuilder;
     // status, flags
     
     ip: StringBuilder;
     port: u16;
+    
+    flags: SyncConnectionFlags;
     
     // TODO: Union
     server: Server;
@@ -50,11 +59,163 @@ struct SyncFile {
     // hash
 }
 
+enum SyncErrorType {
+    SYNCERR_NONE,
+    SYNCERR_OCCUPIED_NAME,
+    SYNCERR_NAME_NOT_FOUND,
+    SYNCERR_CONNECTION_FAILED,
+}
 struct SyncSystem {
     loaded_from_path: StringBuilder; // where the user settings was loaded from, can be empty
  
-    connections: Array<SyncConnection>;
-    units: Array<SyncUnit>
+    connections: Array<SyncConnection*>;
+    units: Array<SyncUnit*>
+    
+    // returns false if name already exists
+    fn add_unit(name: char[]) -> SyncErrorType {
+        unit := find_unit(name)
+        if unit
+            return SYNCERR_OCCUPIED_NAME
+        unit = cast<SyncUnit*>Allocate(sizeof SyncUnit)
+        construct(unit)
+        unit.name.append(name)
+        units.add(unit)
+        return SYNCERR_NONE
+    }
+    // returns false if name already exists
+    // or if old_name doens't exist
+    fn rename_unit(old_name: char[], new_name: char[]) -> SyncErrorType {
+        unit: SyncUnit*
+        for units.sliced() {
+            if it.name == new_name {
+                return SYNCERR_OCCUPIED_NAME
+            }
+            if it.name == old_name {
+                unit = it
+            }
+        }
+        if !unit
+            return SYNCERR_NAME_NOT_FOUND
+        unit.name.clear()
+        unit.name.append(new_name)
+        return SYNCERR_NONE
+    }
+    fn add_connection(name: char[], ip: char[], port: u16) -> SyncErrorType {
+        con := find_connection(name)
+        if con
+            return SYNCERR_OCCUPIED_NAME
+        con = cast<SyncConnection*>Allocate(sizeof SyncConnection)
+        construct(con)
+        con.name.append(name)
+        con.ip.append(ip)
+        con.port = port
+        connections.add(con)
+        return SYNCERR_NONE
+    }
+    // returns false if name already exists
+    // or if old_name doens't exist
+    fn rename_connection(old_name: char[], new_name: char[]) -> SyncErrorType {
+        con: SyncConnection*
+        for connections.sliced() {
+            if it.name == new_name {
+                return SYNCERR_OCCUPIED_NAME
+            }
+            if it.name == old_name {
+                con = it
+            }
+        }
+        if !con
+            return SYNCERR_NAME_NOT_FOUND
+        con.name.clear()
+        con.name.append(new_name)
+        return SYNCERR_NONE
+    }
+    
+    fn set_root(name: char[], path: char[]) -> SyncErrorType {
+        unit := find_unit(name)
+        if !unit
+            return SYNCERR_NAME_NOT_FOUND
+        
+        // TODO: Remove previous file monitor and threads
+        // TODO: Make sure a connection isn't sending files and synchronizing, disable unit, abort?
+        // TODO: Check if path is valid
+        // TODO: Set file monitors
+        unit.root.clear()
+        unit.root.append(path)
+        
+        return SYNCERR_NONE
+    }
+    fn set_ip(name: char[], ip: char[]) -> SyncErrorType {
+        con := find_connection(name)
+        if !con
+            return SYNCERR_NAME_NOT_FOUND
+        
+        con.ip.clear()
+        con.ip.append(ip)
+        
+        return SYNCERR_NONE
+    }
+    fn set_connection_type(name: char[], is_server: bool) -> SyncErrorType {
+        con := find_connection(name)
+        if !con
+            return SYNCERR_NAME_NOT_FOUND
+            
+        if is_server
+            con.flags |= SYNCCON_IS_SERVER
+        else
+            con.flags &= ~SYNCCON_IS_SERVER
+            
+        return SYNCERR_NONE
+    }
+    fn start_connection(name: char[]) -> SyncErrorType {
+        con := find_connection(name)
+        if !con
+            return SYNCERR_NAME_NOT_FOUND
+            
+        if con.flags & SYNCCON_IS_SERVER {
+            con.server.set_callback(net_callback, null)
+            err := con.server.start(con.port)
+            if err != NET_SUCCESS
+                return SYNCERR_CONNECTION_FAILED
+        } else {
+            con.client.set_callback(net_callback, null)
+            err := con.client.start(con.ip, con.port)
+            if err != NET_SUCCESS
+                return SYNCERR_CONNECTION_FAILED
+        }
+            
+        return SYNCERR_NONE
+    }
+    fn stop_connection(name: char[]) -> SyncErrorType {
+        con := find_connection(name)
+        if !con
+            return SYNCERR_NAME_NOT_FOUND
+            
+        if con.flags & SYNCCON_IS_SERVER {
+            con.server.close()
+        } else {
+            con.client.close()
+        }
+            
+        return SYNCERR_NONE
+    }
+    
+    fn find_connection(name: char[]) -> SyncConnection* {
+        for connections.sliced() {
+            if it.name == name {
+                return it
+            }
+        }
+        return null
+    }
+    fn find_unit(name: char[]) -> SyncUnit* {
+        for units.sliced() {
+            if it.name == name {
+                return it
+            }
+        }
+        return null
+    }
 }
 
 fn create_sync_system() -> SyncSystem* {
@@ -70,8 +231,6 @@ fn destroy_sync_system(system: SyncSystem*) {
 
 global sync_system: SyncSystem*;
 fn start_sync_app(options: AppOptions*) {
-    log("Starting app")
-    
     sync_system = create_sync_system()
     
     if options.path_settings.size() > 0 {
@@ -92,19 +251,20 @@ fn start_sync_app(options: AppOptions*) {
     // TODO: Setup auto connections
  
     if options.use_gui {
-        start_gui()   
+        start_gui()
     } else if options.use_cli {
-        start_cli()
+        start_cli(options)
     } else {
         log("GUI or CLI?")
     }
 }
 
-fn start_cli() {
-    log("Starting cli")
-    // read form stdin
-    
-    // circular buffer
+fn net_callback(e: Event, u: void*) {
+    log(&e)
+}
+
+fn start_cli(options: AppOptions*) {
+    // TODO: Circular buffer
     buffer_max := 1000
     buffer: char* = Allocate(buffer_max) // We don't but buffer on stack to avoid stack overflow problems, if we do write beyond the buffer then we will hopefully get a memory access violation.
     defer Free(buffer)
@@ -115,6 +275,10 @@ fn start_cli() {
     written_bytes := 0
     read_offset: i32
     
+    cli_input_offset := 0
+    came_from_cli_input := false
+    
+    log("Welcome to the REPL of UniSync. Type 'help' + enter for options.")
     while {
         has_newline := false
         for read_offset..written_bytes {
@@ -126,44 +290,262 @@ fn start_cli() {
             }
         }
         if !has_newline {
-        #if OS_WINDOWS
-            handle := GetStdHandle(STD_INPUT_HANDLE)
             bytes_read: i32
-            yes := ReadFile(handle, buffer + read_offset, buffer_max - read_offset, &bytes_read, null)
-            if !yes {
-                err := GetLastError()
-                log("stdin read failed ",err)
-                break
+            if cli_input_offset < options.cli_input.size() {
+                bytes_read = options.cli_input.size()
+                if bytes_read > buffer_max - read_offset
+                    bytes_read = buffer_max - read_offset
+                memcpy(buffer + read_offset, options.cli_input.data() + cli_input_offset, bytes_read)
+                cli_input_offset += bytes_read
+                came_from_cli_input = true
+                // TODO: When whole cli input has been read, we can free the string.
+            } else {
+                std_print(">")
+                if written_bytes == 0 {
+                   came_from_cli_input = false
+                }
+                if came_from_cli_input {
+                    came_from_cli_input = false
+                    std_print(buffer, read_offset)
+                }
+                #if OS_WINDOWS
+                    handle := GetStdHandle(STD_INPUT_HANDLE)
+                    yes := ReadFile(handle, buffer + read_offset, buffer_max - read_offset, &bytes_read, null)
+                    if !yes {
+                        err := GetLastError()
+                        log("stdin read failed ",err)
+                        break
+                    }
+                #else
+                    // read(STDIN_FILENO, )
+                #endif
             }
-        #else
-            // read(STDIN_FILENO, )
-        #endif
             written_bytes += bytes_read
             continue
         }
         
+        if came_from_cli_input {
+            std_print(">")
+            std_print(buffer, read_offset)
+        }
+        
         cmd.clear()
-        cmd.append(cast<char*>buffer, read_offset-1) // -1 to skip newline
+        if buffer[read_offset-2] == '\r'
+            cmd.append(buffer, read_offset-2) // -1 to skip carriage return and newline
+        else
+            cmd.append(buffer, read_offset-1) // -1 to skip newline
         memcpy(buffer, buffer + read_offset, written_bytes - read_offset)
         written_bytes -= read_offset
         read_offset = 0
         
+        if cmd.size() == 0
+            continue
+        
         // Process command
-        log("> ", cmd)
         
-        if cmd == "help" {
+        args := split(" ", cmd)
+        defer args.cleanup()
+        
+        base_cmd := args[0]
+        
+        error := SYNCERR_NONE
+        
+        if base_cmd == "help" {
             log("Help:")
+            log(" exit/quit/q - End program")
+            log(" tutorial - Prints more helpful information")
             log(" ls - List connection and units")
-            log(" ")
-            // add conection
-            // rename, edit...
+            log(" addcon [name] - Adds a connection with an optional name")
+            log(" addunit <name> - Adds a unit")
+            log(" renamecon <current_name> <new_name> - Renames a connection")
+            log(" renameunit <current_name> <new_name> - Renames a unit")
+            log(" setroot <name> <path> - Sets the root of a unit")
+            log(" setip <name> <ip> - Sets ip of a connection")
+            log(" setport <name> <port> - Sets port of a connection")
+            log(" settype <name> <server/client> - Specifies a connection as a server or client")
+            log(" startcon <name> - Starts a connection")
+            log(" stopcon <name> - Stops a connection")
+        } else if base_cmd == "exit" || base_cmd == "quit" || base_cmd == "q" {
+            break
+        } else if base_cmd == "ls" {
+            std_print("Connections:")
+            if sync_system.connections.size() == 0
+                log(" None")
+            else
+                log()
+            for sync_system.connections.sliced() {
+                log(" ",it.name)
+                log("  ip: ",it.ip)
+                log("  port: ",it.port)
+            }
+            std_print("Units:")
+            if sync_system.units.size() == 0
+                log(" None")
+            else
+                log()
+            for sync_system.units.sliced() {
+                log(" ",it.name)
+                log("  root: ",it.root)
+            }
+        } else if base_cmd == "addunit" {
+            unit_name := "Unnamed"
+            if args.size() > 1
+                unit_name = args[1]
+            error = sync_system.add_unit(unit_name)
+            switch error {
+                case SYNCERR_OCCUPIED_NAME:
+                    log("Another unit is named '", unit_name, "', use a different name!")
+                case SYNCERR_NONE: ;
+                case:
+            }
+        } else if base_cmd == "addcon" {
+            con_name := "Unnamed"
+            if args.size() > 1
+                con_name = args[1]
+            error = sync_system.add_connection(con_name, "127.0.0.1", DEFAULT_PORT)
+            switch error {
+                case SYNCERR_OCCUPIED_NAME:
+                    log("Another connection is named '", con_name, "', use a different name!")
+                case SYNCERR_NONE: ;
+                case:
+            }
+        } else if base_cmd == "renameunit" {
+            if args.size() < 3 {
+                log("Two arguments are required")
+            } else {
+                old_name := args[1]
+                new_name := args[2]
+                error = sync_system.rename_connection(old_name, new_name)
+                switch error {
+                    case SYNCERR_OCCUPIED_NAME:
+                        log("Another unit is named '", new_name, "'', use a different name!")
+                    case SYNCERR_NAME_NOT_FOUND:
+                        log("Unit '", old_name, "' does not exist!")
+                    case SYNCERR_NONE: ;
+                    case:
+                }
+            }
+        } else if base_cmd == "renamecon" {
+            if args.size() < 3 {
+                log("Two arguments are required")
+            } else {
+                old_name := args[1]
+                new_name := args[2]
+                error = sync_system.rename_connection(old_name, new_name)
+                switch error {
+                    case SYNCERR_OCCUPIED_NAME:
+                        log("Another connection is named '", new_name, "'', use a different name!")
+                    case SYNCERR_NAME_NOT_FOUND:
+                        log("Connection '", old_name, "' does not exist!")
+                    case SYNCERR_NONE: ;
+                    case:
+                }
+            }
+        } else if base_cmd == "setroot" {
+            if args.size() < 3 {
+                log("Two arguments is required")   
+            } else {
+                name := args[1]
+                root := args[2]
+                error = sync_system.set_root(name, root)
+                switch error {
+                    case SYNCERR_NAME_NOT_FOUND:
+                        log("Unit '", name, "' does not exist!")
+                    case:
+                }
+            }
+        } else if base_cmd == "setip" {
+            if args.size() < 3 {
+                log("Two arguments are required")
+            } else {
+                name := args[1]
+                ip := args[2]
+                error = sync_system.set_ip(name, ip)
+                switch error {
+                    case SYNCERR_NAME_NOT_FOUND:
+                        log("Connection '", name, "' does not exist!")
+                    case:
+                }
+            }
+        } else if base_cmd == "settype" {
+            if args.size() < 3 {
+                log("Two arguments are required")
+            } else {
+                name := args[1]
+                type := args[2]
+                if type == "server" {
+                    error = sync_system.set_connection_type(name, true)
+                } else if type == "client" {
+                    error = sync_system.set_connection_type(name, false)
+                } else {
+                    log("Type is limited to server and client, not '",type,"'")
+                }
+                switch error {
+                    case SYNCERR_NAME_NOT_FOUND:
+                        log("Connection '", name, "' does not exist!")
+                    case:
+                }
+            }
+        } else if base_cmd == "startcon" {
+            if args.size() < 2 {
+                log("One argument are required")
+            } else {
+                name := args[1]
+                error = sync_system.start_connection(name)
+                switch error {
+                    case SYNCERR_NAME_NOT_FOUND:
+                        log("Connection '", name, "' does not exist!")
+                    case SYNCERR_CONNECTION_FAILED:
+                        con := sync_system.find_connection(name)
+                        log("Connection '", con.ip, "' failed! (con: ",name,")")
+                    case:
+                }
+            }
+        } else if base_cmd == "stopcon" {
+            if args.size() < 2 {
+                log("One argument are required")
+            } else {
+                name := args[1]
+                error = sync_system.stop_connection(name)
+                switch error {
+                    case SYNCERR_NAME_NOT_FOUND:
+                        log("Connection '", name, "' does not exist!")
+                    case:
+                }
+            }
+        } else if base_cmd == "tutorial" {
+            log("UniSync allows you to synchronize files between computers.")
+            log("A basic example requires UniSync on two computers and")
+            log("a series of commands to set it up. You can find more")
+            log("information here: https://github.com/Emarioo/UniSync")
+            log("")
+            log("Here is a quick guide:")
+            log("- Start UniSync on two computers (refered to as C and S).")
+            log("- On both computers, create a unit and a connection.")
+            log("  Type 'help' to see the respective commands.")
+            log("- On S, set the connection type to be a server.")
+            log("  Then set type as client on C.")
+            log("- On C, set the ip to the ip-address of computer S.")
+            log("- Create one folder on each computer, this is the folder")
+            log("  with files which will be synchronized. You should do")
+            log("  this with a new folder to make sure things are working")
+            log("  as expected.")
+            log("- On both computers use 'setroot' and specify the path")
+            log("  to the folders")
+            log("- To begin synchronizing, start the server first and")
+            log("  then the client.")
+            log("")
+            log("If you have problems contact 'emarioo' on discord.")
+        } else {
+            log("Command '",base_cmd,"' was not recognized. See 'help'.")
         }
-        /*
-        help
-        ls
         
-        
-        */
+        if error != SYNCERR_NONE {
+            // something went wrong which means that remaining input
+            // may do unexpected things
+            written_bytes = 0
+            came_from_cli_input = false
+        }
     }
 }
 fn start_gui() {

@@ -66,16 +66,21 @@ fn load_user_settings(path: char[], settings: SyncSystem*) -> bool {
     offset = header.connection_offset
     settings.connections.reserve(header.connection_count)
     for 0..header.connection_count {
-        it := settings.connections.add()
+        it := cast<SyncConnection*>Allocate(sizeof SyncConnection)
+        construct(it)
+        settings.connections.add(it)
         stream.read_string8(&offset, &it.name)
         stream.read_string8(&offset, &it.ip)
         stream.read<u16>(&offset, &it.port)
+        stream.read<SyncConnectionFlags>(&offset, &it.flags)
     }
     
     offset = header.unit_offset
     settings.units.reserve(header.unit_count)
     for 0..header.unit_count {
-        it := settings.units.add()
+        it := cast<SyncUnit*>Allocate(sizeof SyncUnit)
+        construct(it)
+        settings.units.add(it)
         stream.read_string8(&offset, &it.name)
         stream.read_string16(&offset, &it.root)
         file_count: i32
@@ -112,6 +117,7 @@ fn save_user_settings(path: char[], settings: SyncSystem*) -> bool {
         stream.write_string8(it.name.sliced())
         stream.write_string8(it.ip.sliced())
         stream.write<u16>(it.port)
+        stream.write<SyncConnectionFlags>(it.flags)
     }
     
     stream.write_alignment(4)
