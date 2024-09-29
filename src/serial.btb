@@ -92,7 +92,8 @@ fn load_user_settings(path: char[], settings: SyncSystem*) -> bool {
             file := it.files.add(null)
             
             stream.read(&offset, &file.timestamp)
-            stream.read(&offset, &file.is_dir)
+            stream.read(&offset, &file.remote_timestamp)
+            stream.read(&offset, &file.flags)
             stream.read_string16(&offset, &file.path)
         }
     }
@@ -134,7 +135,8 @@ fn save_user_settings(path: char[], settings: SyncSystem*) -> bool {
             file := iter.ptr
             
             stream.write(file.timestamp)
-            stream.write(file.is_dir)
+            stream.write(file.remote_timestamp)
+            stream.write(file.flags)
             stream.write_string16(file.path)
         }
     }

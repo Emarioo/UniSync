@@ -46,16 +46,33 @@ struct SyncUnit {
     files: BucketArray<SyncFile>;
     // file monitor
     
+    monitor: FileMonitor;
+    
+    fn find_file(path: char[]) -> SyncFile*, i32  {
+        iter := files.create_iterator()
+        while files.iterate(&iter) {
+            it := iter.ptr
+            if it.path == path {
+                return it, iter.index
+            }
+        }
+        return null, -1
+    }
+    
     fn cleanup() {
         name.cleanup()
         root.cleanup()
         files.cleanup()
     }
 }
+enum SyncFileFlags {
+    SYNCFILE_IS_DIRECTORY=0x1,
+}
 struct SyncFile {
     timestamp: u64;
-    is_dir: bool;
+    flags: SyncFileFlags;
     path: StringBuilder; // relative to root
+    remote_timestamp: u64;
     // hash
 }
 
@@ -64,6 +81,7 @@ enum SyncErrorType {
     SYNCERR_OCCUPIED_NAME,
     SYNCERR_NAME_NOT_FOUND,
     SYNCERR_CONNECTION_FAILED,
+    SYNCERR_PATH_NOT_FOUND,
 }
 struct SyncSystem {
     loaded_from_path: StringBuilder; // where the user settings was loaded from, can be empty
@@ -79,6 +97,7 @@ struct SyncSystem {
         unit = cast<SyncUnit*>Allocate(sizeof SyncUnit)
         construct(unit)
         unit.name.append(name)
+        unit.files.init(64)
         units.add(unit)
         return SYNCERR_NONE
     }
@@ -136,12 +155,26 @@ struct SyncSystem {
         if !unit
             return SYNCERR_NAME_NOT_FOUND
         
+        yes := DirectoryExist(path)
+        if !yes
+            return SYNCERR_PATH_NOT_FOUND
+        
+        unit.monitor.cleanup()
+        
         // TODO: Remove previous file monitor and threads
         // TODO: Make sure a connection isn't sending files and synchronizing, disable unit, abort?
         // TODO: Check if path is valid
         // TODO: Set file monitors
         unit.root.clear()
         unit.root.append(path)
+        
+        yes = unit.monitor.check(path, monitor_callback, MONITOR_DEFAULT, unit)
+        if !yes {
+            // TODO: Return monitor error? what does that mean though?
+            return SYNCERR_PATH_NOT_FOUND
+        }
+        
+        init_unit_root(unit)
         
         return SYNCERR_NONE
     }
@@ -173,13 +206,13 @@ struct SyncSystem {
             return SYNCERR_NAME_NOT_FOUND
             
         if con.flags & SYNCCON_IS_SERVER {
-            con.server.set_callback(net_callback, null)
-            err := con.server.start(con.port)
+            con.server.set_callback(net_callback, con)
+            err := con.server.start(con.port, NET_PROTO_MESSAGE)
             if err != NET_SUCCESS
                 return SYNCERR_CONNECTION_FAILED
         } else {
-            con.client.set_callback(net_callback, null)
-            err := con.client.start(con.ip, con.port)
+            con.client.set_callback(net_callback, con)
+            err := con.client.start(con.ip, con.port, NET_PROTO_MESSAGE)
             if err != NET_SUCCESS
                 return SYNCERR_CONNECTION_FAILED
         }
@@ -218,6 +251,140 @@ struct SyncSystem {
     }
 }
 
+fn init_unit_root(unit: SyncUnit*) {
+    log("INIT UNIT ROOT")
+    unit.files.clear() // TODO: Don't clear, we should merge files we find in the iterator with the ones we have.
+    
+    iter := DirectoryIteratorCreate(unit.root)
+    defer DirectoryIteratorDestroy(iter)
+    item: DirIteratorItem*;
+    while DirectoryIteratorNext(iter, &item, true) {
+        // i need to go through existing files and update them.
+        // unit.
+        log(" ", item.name," ", item.file_size)
+        
+        file, index := unit.files.add(null)
+        if !file
+            continue
+        file.path.append(item.name)
+        file.timestamp = item.last_write_time
+        if item.is_directory
+            file.flags |= SYNCFILE_IS_DIRECTORY
+    }
+}
+
+fn monitor_callback(change: FileMonitorChange*, user_data: void*) {
+    log(&change.type," ", change.path)
+}
+
+enum MessageType {
+    INVALID_MESSAGE_TYPE,
+    SYNC_UNITS_AND_FILES,
+    REQUEST_FILE,
+    STREAM_FILE,
+}
+struct MessageHeader {
+    type: MessageType;
+    version: i32;
+}
+fn net_callback(e: NetEvent, u: void*) {
+    con := cast<SyncConnection*>u
+    switch e.type {
+        case EVENT_CONNECT:
+            msg: u8[]
+            stream: ByteStream
+            
+            header := cast<MessageHeader*>stream.write_late(sizeof MessageHeader)
+            header.type = SYNC_UNITS_AND_FILES
+            header.version = 1
+            
+            stream.write<i32>(sync_system.units.size())
+            for unit: sync_system.units.sliced() {
+                stream.write_string8(unit.name.sliced())
+                stream.write<i32>(unit.files.getCount())
+                iter := unit.files.create_iterator()
+                while unit.files.iterate(&iter) {
+                    file := iter.ptr
+                    stream.write<u64>(file.timestamp)
+                    stream.write(file.flags)
+                    stream.write_string8(file.path.sliced())
+                }
+            }
+            
+            yes := stream.finalize(&msg)
+            
+            if con.flags & SYNCCON_IS_SERVER {
+                con.server.send(msg, who = e.who)
+            } else {
+                con.client.send(msg)
+            }
+        case EVENT_RECEIVE:
+            stream: ByteStream;
+            defer stream.cleanup()
+            stream.write(e.bytes.ptr, e.bytes.len)
+            
+            offset: i32;
+            
+            header: MessageHeader;
+            stream.read(&offset, &header, sizeof MessageHeader)
+            
+            if header.version != 1 {
+                // we don't support version
+                return;
+            }
+            switch header.type {
+                case SYNC_UNITS_AND_FILES:
+                    log("Receive sync units")
+                    unit_count: i32
+                    stream.read(&offset, &unit_count)
+                    for 0..unit_count {
+                        unit_name: StringBuilder
+                        defer unit_name.cleanup()
+                        stream.read_string8(&offset, &unit_name)
+                        file_count: i32
+                        stream.read(&offset, &file_count)
+                        log(" unit ", unit_name, " files ",file_count)
+                        
+                        local_unit := sync_system.find_unit(unit_name)
+                        
+                        for 0..file_count {
+                            timestamp: u64
+                            stream.read(&offset, &timestamp)
+                            flags: SyncFileFlags
+                            stream.read(&offset, &flags)
+                            file_path: StringBuilder
+                            defer file_path.cleanup()
+                            stream.read_string8(&offset, &file_path)
+                            
+                            // compare files if valid unit
+                            // if local_unit {
+                            //     local_file := local_unit.find_file(file_path)
+                            //     if local_file.remote_timestamp == timestamp {
+                            //         // fine
+                            //     } else if local_file.remote_timestamp < timestamp {
+                            //         // remote has new version
+                            //         // if my timestamp is newer than the received timestamp, i don't want to overwite my changes.
+                            //         // if my timestamp is older than received timestamp, i don't want to either because i may have made changes it's just that remote made newer changes.
+                            //         // if my timestamp is older than the remote timestamp then we should request new file
+                            //         // the stored
+                            //         if local_file.timestamp > 
+                            //     } else {
+                            //         log("Corruption? remote has an older timestamp than what we cached from last synchronization.")
+                            //         // this may happen if remote switched the file by moving it out and moving in another with a different timestamp.
+                            //         // what do we do in this case?
+                            //     }
+                            // }
+                        }
+                    }
+                case:
+                    // unknown type?
+            }
+            
+        case:
+    }
+    // log(&e)
+}
+
 fn create_sync_system() -> SyncSystem* {
     ptr := cast<SyncSystem*>Allocate(sizeof SyncSystem)
     construct(ptr)
@@ -227,7 +394,6 @@ fn destroy_sync_system(system: SyncSystem*) {
     destruct(system)
     Free(system)
 }
-
 
 global sync_system: SyncSystem*;
 fn start_sync_app(options: AppOptions*) {
@@ -259,9 +425,7 @@ fn start_sync_app(options: AppOptions*) {
     }
 }
 
-fn net_callback(e: Event, u: void*) {
-    log(&e)
-}
+
 
 fn start_cli(options: AppOptions*) {
     // TODO: Circular buffer
@@ -350,13 +514,16 @@ fn start_cli(options: AppOptions*) {
         
         error := SYNCERR_NONE
         
-        if base_cmd == "help" {
+        if cmd[0] == '#' {
+            // comment
+        } else if base_cmd == "help" {
             log("Help:")
             log(" exit/quit/q - End program")
             log(" tutorial - Prints more helpful information")
             log(" ls - List connection and units")
+            log(" lsfiles <name> [options...] - List files of a unit")
             log(" addcon [name] - Adds a connection with an optional name")
-            log(" addunit <name> - Adds a unit")
+            log(" addunit [name] - Adds a unit")
             log(" renamecon <current_name> <new_name> - Renames a connection")
             log(" renameunit <current_name> <new_name> - Renames a unit")
             log(" setroot <name> <path> - Sets the root of a unit")
@@ -377,6 +544,16 @@ fn start_cli(options: AppOptions*) {
                 log(" ",it.name)
                 log("  ip: ",it.ip)
                 log("  port: ",it.port)
+                if it.flags & SYNCCON_IS_SERVER {
+                    log("  type: server")
+                    log("  active: ", it.server.is_active())
+                    if it.server.is_active() {
+                        log("  clients: ", it.server.get_number_connections())
+                    }
+                } else {
+                    log("  type: client")
+                    log("  active: ", it.client.is_active())
+                }
             }
             std_print("Units:")
             if sync_system.units.size() == 0
@@ -386,6 +563,30 @@ fn start_cli(options: AppOptions*) {
             for sync_system.units.sliced() {
                 log(" ",it.name)
                 log("  root: ",it.root)
+            }
+        } else if base_cmd == "lsfiles" {
+            if args.size() < 2 {
+                log("One arguments are required")
+            } else {
+                name := args[1]
+                
+                unit := sync_system.find_unit(name)
+                if !unit {
+                    log("'",name,"' is not a unit.")
+                } else {
+                    std_prints("Files in unit '",name,"':")
+                    if unit.files.getCount() == 0
+                        log(" None")
+                    else
+                        log()
+                    iter := unit.files.create_iterator()
+                    while unit.files.iterate(&iter) {
+                        it := iter.ptr
+                        log(" ",it.path)
+                        log("  time: ",it.timestamp)
+                        log("  flags: ",&it.flags)
+                    }
+                }
             }
         } else if base_cmd == "addunit" {
             unit_name := "Unnamed"
@@ -451,6 +652,8 @@ fn start_cli(options: AppOptions*) {
                 switch error {
                     case SYNCERR_NAME_NOT_FOUND:
                         log("Unit '", name, "' does not exist!")
+                    case SYNCERR_PATH_NOT_FOUND:
+                        log("Path '", root, "' does not exist!")
                     case:
                 }
             }

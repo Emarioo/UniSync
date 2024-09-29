@@ -6,7 +6,7 @@ set exe=.\BetterThanBatch\bin\btb.exe
 if "%~1"=="run" (
     !exe! src/main -d
 ) else (
-    !exe! src/main -d -r
+    !exe! src/main -d -r -- -i cmds
 )
 
 @REM set WITH_CONSOLE=1
